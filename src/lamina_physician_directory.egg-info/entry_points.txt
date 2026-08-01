@@ -1,0 +1,4 @@
+[console_scripts]
+lamina-build-directory = lamina_directory.build_directory:main
+lamina-download-nppes = lamina_directory.download_nppes:main
+lamina-download-taxonomy = lamina_directory.download_taxonomy:main
