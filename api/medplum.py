@@ -87,6 +87,10 @@ class MedplumService(Protocol):
         self, practitioner_id: str
     ) -> list[MedplumCaseContext]: ...
 
+    async def get_authorized_case_context(
+        self, practitioner_id: str, patient_id: str
+    ) -> MedplumCaseContext: ...
+
     async def export_discussion(
         self,
         *,
@@ -424,6 +428,25 @@ class MedplumClientService:
         contexts = [await self.get_case_context(str(patient["id"])) for patient in authorized]
         return sorted(contexts, key=lambda context: context.patient_id)
 
+    async def get_authorized_case_context(
+        self, practitioner_id: str, patient_id: str
+    ) -> MedplumCaseContext:
+        practitioner_ref = f"Practitioner/{practitioner_id}"
+        practitioner = await self._request(
+            "GET", f"Practitioner/{quote(practitioner_id, safe='')}"
+        )
+        if not has_synthetic_tag(practitioner):
+            raise MedplumError("medplum_panel_not_synthetic")
+        patient = await self._request("GET", f"Patient/{quote(patient_id, safe='')}")
+        if not has_synthetic_tag(patient):
+            raise MedplumError("medplum_patient_not_synthetic")
+        if not any(
+            reference.get("reference") == practitioner_ref
+            for reference in patient.get("generalPractitioner", [])
+        ):
+            raise MedplumError("medplum_patient_outside_practitioner_panel")
+        return await self.get_case_context(patient_id)
+
     async def _upsert_identifier(
         self, resource_type: str, system: str, value: str, resource: dict[str, object]
     ) -> dict[str, object]:
@@ -690,12 +713,17 @@ class MedplumClientService:
         return {"communication_id": str(saved["id"]), "status": str(saved["status"])}
 
 
-_service_cache: tuple[MedplumSettings, MedplumClientService] | None = None
+_service_cache: dict[str, tuple[MedplumSettings, MedplumClientService]] = {}
 
 
-def create_medplum_service() -> MedplumService:
-    global _service_cache
-    settings = MedplumSettings.from_environment()
-    if _service_cache is None or _service_cache[0] != settings:
-        _service_cache = (settings, MedplumClientService(settings))
-    return _service_cache[1]
+def create_medplum_service(
+    settings: MedplumSettings | None = None,
+    *,
+    connection_id: str = "legacy-environment-medplum",
+) -> MedplumService:
+    resolved_settings = settings or MedplumSettings.from_environment()
+    cached = _service_cache.get(connection_id)
+    if cached is None or cached[0] != resolved_settings:
+        cached = (resolved_settings, MedplumClientService(resolved_settings))
+        _service_cache[connection_id] = cached
+    return cached[1]

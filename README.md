@@ -364,6 +364,53 @@ OpenAI and physician-review workflow, and writes back only physician-approved di
 never receives Medplum credentials, access tokens, patient identifiers, exact birth dates, or
 complete FHIR resources.
 
+### Organization-level Medplum architecture
+
+Medplum access is resolved through two separate server-enforced boundaries:
+
+```text
+Physician agent
+  -> Organization
+  -> Organization Medplum connection (selects the project)
+  -> Practitioner mapping
+  -> Physician-scoped patient panel
+```
+
+The current demo gives Ethan Bell and Lianne Cha active memberships in **Lamina Demo Medical
+Group**. That organization owns one environment-backed `DEFAULT_MEDPLUM` connection. Credentials
+remain in the server environment; SQLite stores only safe connection metadata and the credential
+alias. OAuth tokens are memory-only and cached independently by stable connection ID. Monitoring
+tools inherit both the organization/project boundary and the Practitioner/panel boundary without
+letting the model choose either one.
+
+Seed the organization and memberships idempotently after seeding the demo physicians:
+
+```powershell
+.\scripts\seed-demo-physician.ps1
+.\scripts\seed-demo-organization.ps1
+.\scripts\seed-medplum-demo-patient.ps1
+```
+
+The first command also performs the safe organization bootstrap, so the explicit organization
+command is useful as a standalone verification/reseed step. Neither command resets activation,
+configuration, claims, forum content, or imported NPPES records.
+
+Safe administration endpoints are:
+
+```text
+GET  /organizations
+GET  /organizations/{id}
+GET  /organizations/{id}/members
+GET  /organizations/{id}/integrations/medplum
+POST /organizations/{id}/integrations/medplum/test
+```
+
+This design is intentionally multi-tenant-ready but is not production tenant onboarding. Future
+credential sources may use a cloud secrets manager, KMS-encrypted credentials, or SMART-on-FHIR
+delegated authorization. Production onboarding must add authenticated organization administration,
+proper secret storage, rotation, consent, redirect/callback handling, and token revocation; those
+features are not implemented in this milestone.
+
 Configure these values in the uncommitted `.env` file. Operating-system environment variables take
 precedence when the application or seed wrapper is started:
 

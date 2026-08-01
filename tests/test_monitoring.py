@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import api.main as api_main
 from api import monitoring
+from api.medplum import MedplumError
 from api.models import (
     GroundedMonitoringResult,
     MedplumCaseContext,
@@ -139,6 +140,12 @@ class FakePanelMedplum:
 
     async def get_authorized_panel_cases(self, practitioner_id):
         return self.panels.get(practitioner_id, [])
+
+    async def get_authorized_case_context(self, practitioner_id, patient_id):
+        for case in await self.get_authorized_panel_cases(practitioner_id):
+            if case.patient_id == patient_id:
+                return case
+        raise MedplumError("medplum_patient_outside_practitioner_panel")
 
 
 class FakeRuntime:

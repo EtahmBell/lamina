@@ -5,6 +5,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from lamina_directory.demo_organization import seed_demo_organization
+
 DEMO_NPI = "9000000999"
 DEMO_AGENT_ID = f"agent-{DEMO_NPI}"
 LIANNE_NPI = "9000001000"
@@ -126,3 +128,4 @@ def seed_demo_physician(database: Path) -> None:
                 (npi, display_name, specialty, npi),
             )
         merge_declared_expertise_tags(connection)
+    seed_demo_organization(database)

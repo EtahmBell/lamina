@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from api.medplum import MedplumError, MedplumService, create_medplum_service
+from api.medplum import MedplumError, MedplumService
 from api.models import (
     AgentConfigurationInput,
     AgentMonitoringRunInput,
@@ -38,7 +38,19 @@ from api.openai_generation import (
     GenerationResult,
     create_generation_service,
 )
+from api.organization_medplum import (
+    OrganizationError,
+    get_authorized_case_for_agent,
+    get_demo_medplum_service,
+    get_medplum_connection_for_organization,
+    get_medplum_service_for_agent,
+    record_medplum_connection_test,
+    resolve_medplum_service_for_organization,
+    safe_medplum_connection_payload,
+    validate_medplum_link_scope,
+)
 from lamina_directory.common import fts_prefix_query
+from lamina_directory.demo_organization import bootstrap_demo_organization
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = Path(os.getenv("LAMINA_DB_PATH", "data/processed/lamina.sqlite"))
@@ -67,9 +79,10 @@ def connect() -> sqlite3.Connection:
         )
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
     upgrade_forum_post_draft_origin(connection)
     connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    connection.execute("PRAGMA foreign_keys = ON")
+    bootstrap_demo_organization(connection)
     return connection
 
 
@@ -629,6 +642,8 @@ def translate_medplum_error(error: MedplumError) -> HTTPException:
         return HTTPException(
             status_code=403, detail="Only explicitly tagged synthetic Medplum patients are supported"
         )
+    if error.category == "medplum_patient_outside_practitioner_panel":
+        return HTTPException(status_code=403, detail="Patient is outside the physician panel")
     if error.category == "medplum_authentication_failed":
         return HTTPException(status_code=502, detail="Medplum authentication failed")
     if error.category == "medplum_access_denied":
@@ -653,9 +668,25 @@ def translate_monitoring_error(error: MonitoringError) -> HTTPException:
     return HTTPException(status_code=503, detail="Grounded monitoring is temporarily unavailable")
 
 
+def translate_organization_error(error: OrganizationError) -> HTTPException:
+    if error.not_found:
+        return HTTPException(status_code=404, detail="Organization integration mapping not found")
+    if error.category in {
+        "organization_membership_ambiguous",
+        "organization_medplum_connection_ambiguous",
+        "organization_medplum_agent_mismatch",
+        "medplum_practitioner_connection_mismatch",
+        "medplum_link_organization_mismatch",
+    }:
+        return HTTPException(status_code=409, detail="Organization integration scope mismatch")
+    return HTTPException(status_code=503, detail="Organization integration is unavailable")
+
+
 def medplum_link_payload(row: sqlite3.Row) -> dict[str, object]:
     return {
         "post_id": row["post_id"],
+        "organization_id": row["organization_id"],
+        "medplum_connection_id": row["medplum_connection_id"],
         "medplum_patient_id": row["medplum_patient_id"],
         "source_type": row["source_type"],
         "condition_ids": json.loads(row["medplum_condition_ids_json"]),
@@ -666,6 +697,15 @@ def medplum_link_payload(row: sqlite3.Row) -> dict[str, object]:
         "updated_at": row["updated_at"],
         "export_communication_id": row["export_communication_id"],
         "exported_at": row["exported_at"],
+    }
+
+
+def safe_medplum_health_payload(result: dict[str, bool]) -> dict[str, bool]:
+    return {
+        "configured": bool(result.get("configured")),
+        "authenticated": bool(result.get("authenticated")),
+        "fhir_reachable": bool(result.get("fhir_reachable")),
+        "project_id_configured": bool(result.get("project_id_configured")),
     }
 
 
@@ -704,6 +744,118 @@ def approved_discussion_payload(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "database": str(DB_PATH)}
+
+
+@app.get("/organizations")
+def list_organizations() -> dict[str, object]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT o.*,
+              (SELECT count(*) FROM organization_members om
+               WHERE om.organization_id=o.id AND om.status='active') AS member_count,
+              (SELECT status FROM organization_medplum_connections omc
+               WHERE omc.organization_id=o.id AND omc.connection_type='medplum'
+               ORDER BY omc.created_at LIMIT 1) AS medplum_connection_status
+            FROM organizations o ORDER BY o.name, o.id
+            """
+        ).fetchall()
+        organizations = [dict(row) for row in rows]
+    return {"organizations": organizations, "count": len(organizations)}
+
+
+@app.get("/organizations/{organization_id}")
+def get_organization(organization_id: str) -> dict[str, object]:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT o.*,
+              (SELECT count(*) FROM organization_members om
+               WHERE om.organization_id=o.id AND om.status='active') AS member_count
+            FROM organizations o WHERE o.id=?
+            """,
+            (organization_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        payload = dict(row)
+        try:
+            medplum = get_medplum_connection_for_organization(connection, organization_id)
+            payload["medplum_connection"] = safe_medplum_connection_payload(medplum)
+        except OrganizationError as error:
+            if not error.not_found:
+                raise translate_organization_error(error) from error
+            payload["medplum_connection"] = None
+        return payload
+
+
+@app.get("/organizations/{organization_id}/members")
+def get_organization_members(organization_id: str) -> dict[str, object]:
+    with connect() as connection:
+        organization = connection.execute(
+            "SELECT 1 FROM organizations WHERE id=?", (organization_id,)
+        ).fetchone()
+        if organization is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        rows = connection.execute(
+            """
+            SELECT om.physician_npi, p.display_name AS physician_name,
+                   om.agent_id, om.role, om.status,
+                   p.primary_specialty AS verified_specialty
+            FROM organization_members om
+            JOIN physicians p ON p.npi=om.physician_npi
+            JOIN agents a ON a.id=om.agent_id AND a.physician_npi=om.physician_npi
+            WHERE om.organization_id=?
+            ORDER BY p.display_name, om.agent_id
+            """,
+            (organization_id,),
+        ).fetchall()
+        members = [dict(row) for row in rows]
+        return {
+            "organization_id": organization_id,
+            "members": members,
+            "count": len(members),
+        }
+
+
+@app.get("/organizations/{organization_id}/integrations/medplum")
+def get_organization_medplum(organization_id: str) -> dict[str, object]:
+    with connect() as connection:
+        try:
+            record = get_medplum_connection_for_organization(connection, organization_id)
+        except OrganizationError as error:
+            raise translate_organization_error(error) from error
+        return safe_medplum_connection_payload(record)
+
+
+@app.post("/organizations/{organization_id}/integrations/medplum/test")
+async def test_organization_medplum(
+    organization_id: str,
+    injected_service: Annotated[MedplumService | None, Depends(get_medplum_service)],
+) -> dict[str, object]:
+    with connect() as connection:
+        record = None
+        try:
+            record = get_medplum_connection_for_organization(connection, organization_id)
+            resolved = resolve_medplum_service_for_organization(
+                connection, organization_id, injected_service
+            )
+            health_result = await resolved.service.health()
+        except (MedplumError, OrganizationError) as error:
+            if record is not None:
+                category = error.category
+                record_medplum_connection_test(
+                    connection, record, succeeded=False, error_category=category
+                )
+                connection.commit()
+            if isinstance(error, MedplumError):
+                raise translate_medplum_error(error) from error
+            raise translate_organization_error(error) from error
+        record_medplum_connection_test(connection, record, succeeded=True)
+        return {
+            **safe_medplum_health_payload(health_result),
+            "status": "connected",
+        }
 
 
 @app.get("/physicians/search")
@@ -1372,11 +1524,15 @@ async def monitor_forum_post(
     injected_runtime: Annotated[MonitoringRuntime | None, Depends(get_monitoring_runtime)],
 ) -> dict[str, object]:
     try:
-        medplum = injected_medplum or create_medplum_service()
         runtime = injected_runtime or create_monitoring_runtime()
-        return await MonitoringService(connect, medplum, runtime).evaluate_post(post_id)
+        resolver = lambda connection, agent_id: get_medplum_service_for_agent(
+            connection, agent_id, injected_medplum
+        )
+        return await MonitoringService(connect, resolver, runtime).evaluate_post(post_id)
     except MedplumError as error:
         raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
     except MonitoringError as error:
         raise translate_monitoring_error(error) from error
 
@@ -1389,13 +1545,17 @@ async def monitor_forum_post_for_agent(
     injected_runtime: Annotated[MonitoringRuntime | None, Depends(get_monitoring_runtime)],
 ) -> dict[str, object]:
     try:
-        medplum = injected_medplum or create_medplum_service()
         runtime = injected_runtime or create_monitoring_runtime()
-        return await MonitoringService(connect, medplum, runtime).evaluate_post(
+        resolver = lambda connection, current_agent_id: get_medplum_service_for_agent(
+            connection, current_agent_id, injected_medplum
+        )
+        return await MonitoringService(connect, resolver, runtime).evaluate_post(
             request.post_id, only_agent_id=agent_id
         )
     except MedplumError as error:
         raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
     except MonitoringError as error:
         raise translate_monitoring_error(error) from error
 
@@ -1405,10 +1565,11 @@ async def medplum_health(
     injected_service: Annotated[MedplumService | None, Depends(get_medplum_service)],
 ) -> dict[str, object]:
     try:
-        service = injected_service or create_medplum_service()
-        result = await service.health()
+        with connect() as connection:
+            resolved = get_demo_medplum_service(connection, injected_service)
+        result = await resolved.service.health()
         add_integration_audit("medplum_health_check_succeeded")
-        return result
+        return safe_medplum_health_payload(result)
     except MedplumError as error:
         add_integration_audit(
             "medplum_health_check_failed", {"error_category": error.category}
@@ -1422,6 +1583,8 @@ async def medplum_health(
                 "error": "medplum_not_configured",
             }
         raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
 
 
 @app.get("/medplum/patients/{patient_id}/case-context")
@@ -1430,14 +1593,17 @@ async def get_medplum_case_context(
     injected_service: Annotated[MedplumService | None, Depends(get_medplum_service)],
 ) -> dict[str, object]:
     try:
-        service = injected_service or create_medplum_service()
-        context = await service.get_case_context(patient_id)
+        with connect() as connection:
+            resolved = get_demo_medplum_service(connection, injected_service)
+        context = await resolved.service.get_case_context(patient_id)
     except MedplumError as error:
         add_integration_audit(
             "medplum_case_context_read_failed",
             {"medplum_patient_id": patient_id, "error_category": error.category},
         )
         raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
     add_integration_audit(
         "medplum_case_context_read",
         {
@@ -1457,16 +1623,21 @@ async def generate_forum_post_from_medplum(
         DraftGenerationService | None, Depends(get_generation_service)
     ],
 ) -> dict[str, object]:
-    try:
-        medplum = injected_medplum or create_medplum_service()
-        case_context = await medplum.get_case_context(patient_id)
-    except MedplumError as error:
-        raise translate_medplum_error(error) from error
-
     with connect() as connection:
         agent = require_draft_permission(
             connection, request.agent_id, "voice_post_drafting_enabled"
         )
+        try:
+            resolved_medplum = get_medplum_service_for_agent(
+                connection, agent["id"], injected_medplum
+            )
+            case_context = await get_authorized_case_for_agent(
+                connection, resolved_medplum, agent["id"], patient_id
+            )
+        except MedplumError as error:
+            raise translate_medplum_error(error) from error
+        except OrganizationError as error:
+            raise translate_organization_error(error) from error
         agent_context = generation_context(connection, agent)
         case_facts = {
             "synthetic": True,
@@ -1527,8 +1698,9 @@ async def generate_forum_post_from_medplum(
             INSERT INTO forum_medplum_links (
               id, post_id, medplum_patient_id, medplum_condition_ids_json,
               medplum_medication_request_ids_json, medplum_observation_ids_json,
-              source_type, created_by_agent_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'medplum_synthetic_patient', ?, ?, ?)
+              source_type, created_by_agent_id, organization_id,
+              medplum_connection_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'medplum_synthetic_patient', ?, ?, ?, ?, ?)
             """,
             (
                 link_id,
@@ -1538,6 +1710,8 @@ async def generate_forum_post_from_medplum(
                 json.dumps(by_type["MedicationRequest"]),
                 json.dumps(by_type["Observation"]),
                 agent["id"],
+                resolved_medplum.organization_id,
+                resolved_medplum.connection_id,
                 now,
                 now,
             ),
@@ -1613,8 +1787,17 @@ async def export_forum_post_to_medplum(
         ]
         approved_payload = approved_discussion_payload(connection, post, responses)
         try:
-            medplum = injected_service or create_medplum_service()
-            exported = await medplum.export_discussion(
+            resolved_medplum = get_medplum_service_for_agent(
+                connection, post["author_agent_id"], injected_service
+            )
+            validate_medplum_link_scope(link, resolved_medplum)
+            await get_authorized_case_for_agent(
+                connection,
+                resolved_medplum,
+                post["author_agent_id"],
+                link["medplum_patient_id"],
+            )
+            exported = await resolved_medplum.service.export_discussion(
                 post_id=post_id,
                 patient_id=link["medplum_patient_id"],
                 source_refs=source_refs,
@@ -1631,6 +1814,16 @@ async def export_forum_post_to_medplum(
             )
             connection.commit()
             raise translate_medplum_error(error) from error
+        except OrganizationError as error:
+            add_audit(
+                connection,
+                post["author_agent_id"],
+                post["author_physician_npi"],
+                "medplum_export_failed",
+                {"post_id": post_id, "error_category": error.category},
+            )
+            connection.commit()
+            raise translate_organization_error(error) from error
         now = utc_now()
         connection.execute(
             """

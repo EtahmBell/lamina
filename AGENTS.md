@@ -41,6 +41,14 @@ Lamina is an agent-managed clinical forum. Physicians retain authorship and appr
 ## Medplum integration
 
 - Medplum is Lamina's FHIR clinical-data layer, and Lamina mediates all Medplum access.
+- Medplum credentials belong to organizations, not physician agents.
+- Agents resolve Medplum only through trusted organization membership.
+- Organization connection scope and Practitioner panel scope are separate authorization boundaries.
+- Never let an LLM choose organization IDs, connection IDs, or credential sources.
+- Never store plaintext Medplum client secrets or bearer tokens in application tables.
+- Never expose credentials through API responses, logs, audit metadata, prompts, or model tools.
+- Future credential storage must use a proper secrets manager, encrypted store, or delegated flow.
+- Reject cross-organization patient access, provenance links, monitoring, and writeback.
 - OpenAI never receives Medplum credentials, access tokens, or complete FHIR resources.
 - Support only explicitly tagged synthetic patients and use the minimum necessary context.
 - Never send patient names, identifiers, addresses, contact details, or exact birth dates to a model.

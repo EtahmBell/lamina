@@ -151,6 +151,47 @@ CREATE TABLE IF NOT EXISTS integration_audit_events (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS organizations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS organization_members (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  physician_npi TEXT NOT NULL REFERENCES physicians(npi),
+  agent_id TEXT NOT NULL REFERENCES agents(id),
+  role TEXT NOT NULL CHECK (role IN ('physician', 'admin')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(organization_id, agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS organization_medplum_connections (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  connection_type TEXT NOT NULL CHECK (connection_type = 'medplum'),
+  base_url TEXT NOT NULL,
+  token_url TEXT NOT NULL,
+  fhir_base_url TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  credential_source TEXT NOT NULL CHECK (credential_source = 'environment'),
+  credential_key TEXT NOT NULL CHECK (credential_key = 'DEFAULT_MEDPLUM'),
+  status TEXT NOT NULL CHECK (
+    status IN ('unconfigured', 'configured', 'connected', 'error', 'inactive')
+  ),
+  last_verified_at TEXT,
+  last_error_category TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(organization_id, connection_type)
+);
+
 CREATE TABLE IF NOT EXISTS forum_medplum_links (
   id TEXT PRIMARY KEY,
   post_id TEXT NOT NULL UNIQUE REFERENCES forum_posts(id),
@@ -160,6 +201,8 @@ CREATE TABLE IF NOT EXISTS forum_medplum_links (
   medplum_observation_ids_json TEXT NOT NULL,
   source_type TEXT NOT NULL CHECK (source_type = 'medplum_synthetic_patient'),
   created_by_agent_id TEXT NOT NULL REFERENCES agents(id),
+  organization_id TEXT REFERENCES organizations(id),
+  medplum_connection_id TEXT REFERENCES organization_medplum_connections(id),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   export_communication_id TEXT,
@@ -170,6 +213,8 @@ CREATE TABLE IF NOT EXISTS medplum_practitioner_links (
   agent_id TEXT PRIMARY KEY REFERENCES agents(id),
   physician_npi TEXT NOT NULL UNIQUE REFERENCES physicians(npi),
   medplum_practitioner_id TEXT NOT NULL UNIQUE,
+  organization_id TEXT REFERENCES organizations(id),
+  medplum_connection_id TEXT REFERENCES organization_medplum_connections(id),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -227,6 +272,12 @@ CREATE INDEX IF NOT EXISTS idx_generation_metadata_agent
   ON generation_metadata(agent_id, generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_integration_audit_events_action
   ON integration_audit_events(action, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_members_one_active_agent
+  ON organization_members(agent_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_organization_members_organization
+  ON organization_members(organization_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_org_medplum_connections_organization
+  ON organization_medplum_connections(organization_id, status);
 CREATE INDEX IF NOT EXISTS idx_forum_medplum_links_patient
   ON forum_medplum_links(medplum_patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_monitoring_runs_post

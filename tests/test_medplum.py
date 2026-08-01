@@ -175,6 +175,22 @@ class FakeMedplumService:
             raise MedplumError(self.error)
         return self.context.model_copy(update={"patient_id": patient_id})
 
+    async def get_authorized_panel_cases(self, practitioner_id):
+        del practitioner_id
+        if self.error:
+            raise MedplumError(self.error)
+        return [
+            self.context,
+            self.context.model_copy(update={"patient_id": "patient-id"}),
+        ]
+
+    async def get_authorized_case_context(self, practitioner_id, patient_id):
+        cases = await self.get_authorized_panel_cases(practitioner_id)
+        for case in cases:
+            if case.patient_id == patient_id:
+                return case
+        raise MedplumError("medplum_patient_outside_practitioner_panel")
+
     async def seed_demo_patient(self):
         return {}
 
@@ -224,6 +240,20 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "INSERT INTO agents (id, physician_npi) VALUES ('agent-1234567890', '1234567890')"
         )
     seed_demo_physician(database)
+    with sqlite3.connect(database) as connection:
+        connection.executemany(
+            """
+            INSERT INTO medplum_practitioner_links (
+              agent_id, physician_npi, medplum_practitioner_id, organization_id,
+              medplum_connection_id, created_at, updated_at
+            ) VALUES (?, ?, ?, 'org-lamina-demo-medical-group',
+                      'medplum-lamina-demo-medical-group', 'now', 'now')
+            """,
+            [
+                (DEMO_AGENT_ID, DEMO_NPI, "practitioner-ethan"),
+                (LIANNE_AGENT_ID, LIANNE_NPI, "practitioner-lianne"),
+            ],
+        )
     monkeypatch.setattr(api_main, "DB_PATH", database)
     api_main.app.dependency_overrides.clear()
     yield TestClient(api_main.app), database
@@ -270,7 +300,12 @@ def test_missing_configuration_is_safe_and_non_medplum_routes_work(client, monke
         events = connection.execute(
             "SELECT action, metadata_json FROM integration_audit_events ORDER BY created_at"
         ).fetchall()
-    assert [event[0] for event in events] == [
+    medplum_events = [
+        event
+        for event in events
+        if event[0] in {"medplum_health_check_failed", "medplum_case_context_read_failed"}
+    ]
+    assert [event[0] for event in medplum_events] == [
         "medplum_health_check_failed",
         "medplum_case_context_read_failed",
     ]
@@ -327,6 +362,24 @@ async def test_seed_is_tagged_linked_and_idempotent():
     for resource_type in ("Condition", "MedicationRequest", "Observation"):
         for resource_id in ethan[resource_type]:
             assert backend.resources[resource_type][resource_id]["subject"]["reference"] == patient_ref
+
+
+@pytest.mark.anyio
+async def test_authorized_case_context_enforces_practitioner_panel():
+    backend = FhirBackend()
+    service = MedplumClientService(settings(), transport=httpx.MockTransport(backend))
+    seeded = await service.seed_demo_panel()
+    ethan_patient = seeded["cases"]["ethan_index"]["Patient"]
+
+    context = await service.get_authorized_case_context(
+        seeded["practitioners"]["ethan"], ethan_patient
+    )
+
+    assert context.patient_id == ethan_patient
+    with pytest.raises(MedplumError, match="medplum_patient_outside_practitioner_panel"):
+        await service.get_authorized_case_context(
+            seeded["practitioners"]["lianne"], ethan_patient
+        )
 
 
 @pytest.mark.anyio
@@ -520,6 +573,8 @@ def test_medplum_generation_reuses_draft_flow_and_hides_identifiers(client):
     assert "Alex" not in sent
     link = http.get(f"/forum/posts/{post['id']}/medplum-link").json()
     assert link["medplum_patient_id"] == "patient-secret-id"
+    assert link["organization_id"] == "org-lamina-demo-medical-group"
+    assert link["medplum_connection_id"] == "medplum-lamina-demo-medical-group"
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM forum_medplum_links").fetchone()[0] == 1
 
@@ -536,6 +591,31 @@ def test_openai_failure_creates_neither_post_nor_link(client):
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM forum_posts").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM forum_medplum_links").fetchone()[0] == 0
+
+
+def test_generation_rejects_patient_outside_physician_practitioner_panel(client):
+    http, _ = client
+    activate(http, LIANNE_NPI, LIANNE_AGENT_ID, voice=True)
+
+    class PhysicianScopedMedplum(FakeMedplumService):
+        async def get_authorized_panel_cases(self, practitioner_id):
+            if practitioner_id == "practitioner-ethan":
+                return [self.context]
+            return []
+
+    medplum = PhysicianScopedMedplum()
+    generation = FakeGenerationService()
+    override_services(medplum, generation)
+    response = http.post(
+        "/medplum/patients/patient-secret-id/forum-posts/generate",
+        json={
+            "agent_id": LIANNE_AGENT_ID,
+            "physician_guidance": "Ask a bounded question.",
+        },
+    )
+
+    assert response.status_code == 403
+    assert generation.medplum_calls == []
 
 
 def test_untagged_patient_is_rejected_safely(client):
@@ -629,6 +709,41 @@ def test_export_contains_only_approved_content_and_is_idempotent(client):
     assert exported["patient_id"] == "patient-secret-id"
     link = http.get(f"/forum/posts/{post['id']}/medplum-link").json()
     assert link["export_communication_id"] == "communication-1"
+
+
+def test_export_rejects_cross_organization_medplum_link(client):
+    http, database = client
+    activate(http, DEMO_NPI, DEMO_AGENT_ID, voice=True)
+    activate(http, LIANNE_NPI, LIANNE_AGENT_ID, responses=True)
+    medplum = FakeMedplumService()
+    override_services(medplum, FakeGenerationService())
+    post = create_generated_post(http)
+    http.post(f"/forum/posts/{post['id']}/approve", json={"physician_npi": DEMO_NPI})
+    response = http.post(
+        f"/forum/posts/{post['id']}/responses/drafts",
+        json={
+            "agent_id": LIANNE_AGENT_ID,
+            "response_type": "clarifying_question",
+            "headline": "Approved headline",
+            "content": "Approved response content",
+            "citations": [],
+            "draft_origin": "physician_text_request",
+        },
+    ).json()
+    http.post(
+        f"/forum/responses/{response['id']}/approve",
+        json={"physician_npi": LIANNE_NPI},
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE forum_medplum_links SET organization_id='org-another' WHERE post_id=?",
+            (post["id"],),
+        )
+
+    exported = http.post(f"/forum/posts/{post['id']}/export-to-medplum")
+
+    assert exported.status_code == 409
+    assert medplum.exports == []
 
 
 def test_post_without_medplum_link_cannot_export(client):

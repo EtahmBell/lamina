@@ -290,6 +290,32 @@ do return provenance identifiers; do not reuse their JSON in a public component.
 
 ## 12. CORS
 
+## Organization / Medplum integration
+
+Lamina organizations own Medplum connections; physicians participate through organization
+memberships. The backend derives the organization from the trusted physician agent, selects that
+organization's Medplum project, and then applies the physician's Practitioner mapping to restrict
+the patient panel. The browser and the Agents SDK never choose the organization or handle client
+credentials.
+
+For the hackathon, **Lamina Demo Medical Group** uses the server-side, environment-backed
+`DEFAULT_MEDPLUM` connection. Production should replace this credential source with a secrets
+manager or delegated OAuth/SMART-on-FHIR flow. Safe frontend/admin endpoints are:
+
+| Method and path | Safe purpose |
+|---|---|
+| `GET /organizations` | Organization summaries and member/connection status. |
+| `GET /organizations/{id}` | Organization detail with safe Medplum status metadata. |
+| `GET /organizations/{id}/members` | Physician, agent, role, status, and verified specialty. |
+| `GET /organizations/{id}/integrations/medplum` | Safe connection configuration/status; no credential values. |
+| `POST /organizations/{id}/integrations/medplum/test` | Server-side authentication/reachability test and safe health result. |
+
+Never add fields for a Medplum client ID, client secret, bearer token, or Authorization header to
+frontend state or forms. The existing global health endpoint remains available for demo
+compatibility and resolves internally through the demo organization.
+
+## 12. CORS
+
 The FastAPI application currently has **no CORS middleware and no allowed-origin list**. Therefore
 `http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:5173`, and
 `http://127.0.0.1:5173` are not currently supported for cross-origin browser calls.
@@ -308,6 +334,9 @@ not run it as a reset against a database whose local demo workflow state must be
 
 # Idempotent, non-destructive synthetic Ethan/Lianne physician seed
 .\scripts\seed-demo-physician.ps1
+
+# Idempotent demo organization, memberships, and environment connection reference
+.\scripts\seed-demo-organization.ps1
 
 # Idempotent synthetic Medplum practitioner/patient panel seed; loads .env
 .\scripts\seed-medplum-demo-patient.ps1

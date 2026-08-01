@@ -30,6 +30,13 @@ from api.models import (
     MedplumCaseContext,
     MonitoringAction,
 )
+from api.organization_medplum import (
+    OrganizationError,
+    ResolvedOrganizationMedplum,
+    get_authorized_case_for_agent,
+    get_practitioner_id_for_agent,
+    validate_medplum_link_scope,
+)
 
 MONITORING_PROMPT_VERSION = "lamina-monitoring-agent-v2"
 MAX_CANDIDATES = 5
@@ -401,11 +408,13 @@ class MonitoringService:
     def __init__(
         self,
         connect: Callable[[], sqlite3.Connection],
-        medplum: MedplumService,
+        resolve_medplum: Callable[
+            [sqlite3.Connection, str], ResolvedOrganizationMedplum
+        ],
         runtime: MonitoringRuntime,
     ) -> None:
         self.connect = connect
-        self.medplum = medplum
+        self.resolve_medplum = resolve_medplum
         self.runtime = runtime
 
     @staticmethod
@@ -447,20 +456,36 @@ class MonitoringService:
             ).fetchone()
             if link is None:
                 raise MonitoringError("monitoring_post_not_medplum_grounded")
-            source_context = await self.medplum.get_case_context(link["medplum_patient_id"])
+            source_medplum = self.resolve_medplum(connection, post["author_agent_id"])
+            validate_medplum_link_scope(link, source_medplum)
+            source_context = await get_authorized_case_for_agent(
+                connection,
+                source_medplum,
+                post["author_agent_id"],
+                link["medplum_patient_id"],
+            )
             params: list[object] = [post["author_agent_id"]]
             where = "a.id != ?"
             if only_agent_id:
                 where += " AND a.id=?"
                 params.append(only_agent_id)
+            params.extend(
+                [source_medplum.organization_id, source_medplum.connection_id]
+            )
             agents = connection.execute(
                 f"""
-                SELECT a.*, p.display_name, p.source, ac.*, mpl.medplum_practitioner_id
+                SELECT a.*, p.display_name, p.source, ac.*,
+                       om.organization_id AS member_organization_id,
+                       mpl.medplum_practitioner_id,
+                       mpl.medplum_connection_id AS practitioner_connection_id
                 FROM agents a
                 JOIN physicians p ON p.npi=a.physician_npi
                 JOIN agent_configurations ac ON ac.agent_id=a.id
+                JOIN organization_members om ON om.agent_id=a.id AND om.status='active'
                 JOIN medplum_practitioner_links mpl ON mpl.agent_id=a.id
+                  AND mpl.organization_id=om.organization_id
                 WHERE {where} AND a.status='active' AND lower(p.source)='synthetic'
+                  AND om.organization_id=? AND mpl.medplum_connection_id=?
                   AND ac.response_drafting_enabled=1
                   AND ac.publication_mode='requires_physician_approval'
                 ORDER BY a.id
@@ -533,6 +558,28 @@ class MonitoringService:
                 connection.execute("SELECT * FROM monitoring_runs WHERE id=?", (run_id,)).fetchone(),
             )
         self._audit(connection, agent, "monitoring_candidate_matched", {"monitoring_run_id": run_id, "post_id": post["id"], "matched_topics": matched})
+        try:
+            agent_medplum = self.resolve_medplum(connection, agent["id"])
+            practitioner_id = get_practitioner_id_for_agent(
+                connection, agent_medplum, agent["id"]
+            )
+        except OrganizationError as error:
+            trace = ["monitoring_started", "organization_resolution_failed"]
+            self._finish(connection, run_id, "failed", 0, trace, error=error.category)
+            self._audit(
+                connection,
+                agent,
+                "monitoring_failed",
+                {
+                    "monitoring_run_id": run_id,
+                    "post_id": post["id"],
+                    "safe_error_category": error.category,
+                },
+            )
+            row = connection.execute(
+                "SELECT * FROM monitoring_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            return self._run_payload(agent, row)
         post_context = {
             "title": post["title"],
             "clinical_question": post["clinical_question"],
@@ -548,11 +595,11 @@ class MonitoringService:
             physician_display_name=agent["display_name"],
             verified_specialties=json.loads(agent["verified_specialties_json"]),
             monitoring_topics=json.loads(agent["monitoring_topics_json"]),
-            permitted_medplum_practitioner_id=agent["medplum_practitioner_id"],
+            permitted_medplum_practitioner_id=practitioner_id,
             current_post_id=post["id"],
             post_context=post_context,
             source_case_context=source_context,
-            medplum=self.medplum,
+            medplum=agent_medplum.service,
         )
         try:
             result = await self.runtime.run(run_context)
