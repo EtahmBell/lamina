@@ -9,6 +9,26 @@ if (import.meta.env.PROD && !configuredApiBaseUrl.startsWith('https://')) {
 
 export const API_BASE_URL = configuredApiBaseUrl.replace(/\/$/, '')
 
+export interface AgentConfiguration {
+  verified_specialties: string[]
+  declared_expertise_tags: string[]
+  monitoring_topics: string[]
+  voice_post_drafting_enabled: boolean
+  response_drafting_enabled: boolean
+  thread_summaries_enabled: boolean
+  citations_required: boolean
+  publication_mode: 'requires_physician_approval'
+  report_cadence: 'none' | 'weekly' | 'monthly'
+  report_topics: string[]
+  report_source_scope: 'network' | 'medplum' | 'network_and_medplum'
+  report_length: 'brief' | 'detailed'
+  notifications: Array<
+    'draft_response_ready' | 'reply_to_my_question' | 'clarification_requested' | 'report_ready'
+  >
+}
+
+export type AgentConfigurationUpdate = Omit<AgentConfiguration, 'verified_specialties'>
+
 export interface AgentDetails {
   id: string
   physician_npi: string
@@ -22,12 +42,7 @@ export interface AgentDetails {
     profile_status: string
   }
   claim: { status: string; verified_at: string | null } | null
-  configuration: {
-    verified_specialties: string[]
-    declared_expertise_tags: string[]
-    monitoring_topics: string[]
-    publication_mode: string
-  } | null
+  configuration: AgentConfiguration | null
   effective_permissions: {
     can_draft_voice_posts: boolean
     can_draft_responses: boolean
@@ -261,6 +276,16 @@ export function getAgent(agentId: string): Promise<AgentDetails> {
   return request(`/agents/${encodeURIComponent(agentId)}`)
 }
 
+export function saveAgentConfiguration(
+  agentId: string,
+  configuration: AgentConfigurationUpdate,
+): Promise<AgentDetails> {
+  return request(`/agents/${encodeURIComponent(agentId)}/configuration`, {
+    method: 'PUT',
+    body: JSON.stringify(configuration),
+  })
+}
+
 export async function getOrganizations(): Promise<OrganizationSummary[]> {
   const result = await request<{ organizations: OrganizationSummary[] }>('/organizations')
   return result.organizations
@@ -307,6 +332,23 @@ export function generatePatientForumPost(
       body: JSON.stringify({ physician_guidance: physicianGuidance }),
     },
   )
+}
+
+export interface ManualForumPostDraft {
+  agent_id: string
+  title: string
+  clinical_question: string
+  context_summary: string
+  specialty_tags: string[]
+  case_classification: 'synthetic'
+  draft_origin: 'physician_text_request'
+}
+
+export function createForumPostDraft(draft: ManualForumPostDraft): Promise<ForumPost> {
+  return request('/forum/posts/drafts', {
+    method: 'POST',
+    body: JSON.stringify(draft),
+  })
 }
 
 export function approveForumPost(

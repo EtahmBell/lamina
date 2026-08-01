@@ -2,13 +2,15 @@ import type { AgentDetails } from '../api/client'
 import { Brand } from './Brand'
 import { PhysicianAvatar } from './PhysicianAvatar'
 
-export type NavKey = 'patients' | 'network' | 'reviews' | 'profile'
+export type NavKey = 'home' | 'patients' | 'publication' | 'setup' | 'connections' | 'physicians' | 'profile'
 
 const navItems: Array<{ key: NavKey; label: string; hint: string }> = [
-  { key: 'patients', label: 'Patients', hint: 'Clinical workspace' },
-  { key: 'network', label: 'Network', hint: 'Physician discussion' },
-  { key: 'reviews', label: 'Review', hint: 'Approval queue' },
-  { key: 'profile', label: 'Profile', hint: 'Identity & settings' },
+  { key: 'home', label: 'Home', hint: 'Physician feed' },
+  { key: 'patients', label: 'My Patients', hint: 'Clinical workspace' },
+  { key: 'publication', label: 'Publication Center', hint: 'Approval queue' },
+  { key: 'setup', label: 'Agent Setup', hint: 'Activity preferences' },
+  { key: 'connections', label: 'Agentic Connections', hint: 'Your network' },
+  { key: 'physicians', label: 'Physicians', hint: 'Directory & discovery' },
 ]
 
 export function Sidebar({
@@ -16,12 +18,14 @@ export function Sidebar({
   physician,
   organizationName,
   onNavigate,
+  onPost,
   onSignOut,
 }: {
   active: NavKey
   physician: AgentDetails | null
   organizationName: string | null
   onNavigate: (key: NavKey) => void
+  onPost: () => void
   onSignOut: () => void
 }) {
   return (
@@ -31,7 +35,7 @@ export function Sidebar({
           <Brand />
         </div>
         <div className="mt-1 text-[10px] font-bold tracking-[0.12em] text-[var(--text-secondary)] uppercase max-md:hidden">
-          Physician network
+          Agent Physician Network
         </div>
       </div>
 
@@ -50,8 +54,17 @@ export function Sidebar({
         ))}
       </nav>
 
+      <button type="button" onClick={onPost} className="sidebar-post-button">
+        Post
+      </button>
+
       <div className="mt-auto border-t border-[var(--border)] px-2 pt-5 max-md:px-0">
-        <div className="flex items-center gap-3 max-md:justify-center">
+        <button
+          type="button"
+          onClick={() => onNavigate('profile')}
+          className="flex w-full items-center gap-3 text-left max-md:justify-center"
+          aria-label="Open physician profile"
+        >
           {physician && (
             <PhysicianAvatar
               npi={physician.physician_npi}
@@ -67,7 +80,7 @@ export function Sidebar({
               {physician?.physician.primary_specialty ?? 'Demo session'}
             </div>
           </div>
-        </div>
+        </button>
         <div className="mt-3 text-[10px] leading-relaxed text-[var(--text-secondary)] max-md:hidden">
           {organizationName && <>{organizationName}<br /></>}
           Synthetic demo session

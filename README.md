@@ -70,10 +70,11 @@ npm run dev
 ```
 
 Open `http://localhost:5173`. The app first shows a controlled selector for the two synthetic demo
-physicians, Ethan Bell and Lianne Cha. **My Patients**, **Review**, and **Profile** use the selected
-physician's real backend context. **Network** loads published forum content and NPPES search results
-from the backend. Static articles, fake patient/post data, and the generic frontend assistant have
-been removed. This hackathon session selector is not production authentication.
+physicians, Ethan Bell and Lianne Cha. **My Patients**, **Publication Center**, **Agent Setup**, and
+the signed-in profile use the selected physician's real backend context. **Home** combines real
+published forum content with one isolated fictional showcase fixture, while **Physicians** keeps
+live NPPES search distinct from fictional demo profiles. This hackathon session selector is not
+production authentication.
 
 For the deployed Vercel frontend, set `VITE_API_BASE_URL` to the HTTPS URL of the tunnel forwarding
 to local FastAPI, then redeploy. Never set the deployed value to localhost and never place OpenAI
@@ -116,9 +117,9 @@ npm run dev
 ```
 
 The recording flow is: select Ethan, open his patient, generate and approve a question, run
-monitoring, sign out, select Lianne, approve her real grounded response in **Review**, sign out,
-then select Ethan and open the published thread. The network intentionally begins empty and is
-created live during the presentation.
+monitoring, sign out, select Lianne, approve her real grounded response in **Publication Center**,
+sign out, then select Ethan and open the published thread on **Home**. Real forum persistence begins
+empty; isolated showcase content remains visible so the physician network feels established.
 
 ## Optional populated showcase
 
@@ -138,15 +139,24 @@ not duplicate content. Return to the canonical zero-content live-demo state with
 .\scripts\reset-demo.ps1
 ```
 
-The frontend has no mock-content toggle: both modes are rendered from the same FastAPI forum APIs.
+Home always includes the isolated fictional showcase fixture in `frontend/src/demo/showcaseFeed.ts`;
+real published FastAPI discussions appear above it. The optional database showcase seed remains a
+separate backend demonstration mode and is never required by the frontend fixture.
 
-On patient detail and Network screens, the restrained **Ask Lamina** composer provides contextual
-typed shortcuts into existing backend workflows. Patient requests such as "Has anyone seen
-something similar?" reuse the physician-scoped Medplum post-generation endpoint and still produce
-only an approval-required draft. Network requests search only published backend discussions.
+The persistent **Ask Lamina** right rail provides contextual typed shortcuts into existing backend
+workflows. Patient requests such as "Has anyone seen something similar?" reuse the physician-scoped
+Medplum post-generation endpoint and still produce only an approval-required draft. Home searches
+real published discussions plus the isolated showcase fixture.
 Referral and draft-revision requests return an honest unsupported result because those backend
 workflows do not exist. The microphone is disabled rather than simulating voice input; Deepgram is
 not implemented. There is no generic chat history or browser-to-OpenAI connection.
+
+The authenticated sidebar's **Post** action opens a global `compose -> review -> publish` overlay.
+Manual questions use the real `POST /forum/posts/drafts` route and then the ownership-enforcing
+`POST /forum/posts/{post_id}/approve` route, so published questions persist and appear on Home.
+From patient detail, an explicit checkbox reuses the existing bounded Medplum generation workflow.
+The backend currently has no article content type, so Article is an honest deferred UI shell with
+publication disabled rather than a simulated success.
 
 To add the fictional Ethan Bell profile to an existing full NPPES database without rebuilding or
 removing any records, run:

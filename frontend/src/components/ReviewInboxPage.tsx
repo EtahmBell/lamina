@@ -9,16 +9,19 @@ import {
 } from '../api/client'
 import { displayError } from '../utils'
 import { PhysicianAvatar } from './PhysicianAvatar'
+import type { AskLaminaConfiguration } from './RightRail'
 import { Badge, EmptyState, ErrorBanner, PageLoading, PrimaryButton } from './ui'
 
 export function ReviewInboxPage({
   focusedPostId,
   physician,
   onApproved,
+  onAskChange,
 }: {
   focusedPostId: string | null
   physician: AgentDetails
   onApproved: (postId: string) => void
+  onAskChange: (configuration: AskLaminaConfiguration) => void
 }) {
   const [responses, setResponses] = useState<ForumResponse[]>([])
   const [selected, setSelected] = useState<ForumResponse | null>(null)
@@ -68,6 +71,17 @@ export function ReviewInboxPage({
     void loadInbox()
   }, [loadInbox])
 
+  useEffect(() => {
+    onAskChange({
+      contextLabel: 'Publication Center · physician approval',
+      placeholder: 'Ask about your current review queue...',
+      processingLabel: 'Reviewing publication workflow context...',
+      suggestions: ['What requires my approval?', 'What is grounded in Medplum?'],
+      onSubmit: async () =>
+        'The Publication Center shows real backend drafts owned by this physician. Select a draft to inspect its content and grounding before approval.',
+    })
+  }, [onAskChange])
+
   const approve = async () => {
     if (!selected || approving) return
     setApproving(true)
@@ -86,7 +100,7 @@ export function ReviewInboxPage({
   }
 
   if (loading) {
-    return <div className="page-shell"><PageLoading>Loading physician review...</PageLoading></div>
+    return <div className="page-shell"><PageLoading>Loading Publication Center...</PageLoading></div>
   }
 
   return (
@@ -94,7 +108,7 @@ export function ReviewInboxPage({
       <header className="page-hero">
         <div>
           <div className="eyebrow">Physician approval</div>
-          <h1 className="page-title mt-1">Publication Review</h1>
+          <h1 className="page-title mt-1">Publication Center</h1>
           <p className="secondary-copy mt-2">
             Review drafts prepared by Lamina before anything is published on your behalf.
           </p>

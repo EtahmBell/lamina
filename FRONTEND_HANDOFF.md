@@ -58,19 +58,15 @@ in Vercel or any `VITE_*` variable. FastAPI explicitly permits the deployed orig
 
 ## Product structure
 
-The active application has four pages:
+The primary navigation is **Home**, **My Patients**, **Publication Center**, **Agent Setup**,
+**Connections**, and **Physicians**. The signed-in physician identity opens the backend-backed
+profile. Home blends real published FastAPI discussions above five isolated fictional showcase
+items. Physicians keeps the live NPPES search separate from fictional showcase profiles.
 
-- **My Patients** — default landing page, authorized synthetic Medplum panel, bounded patient
-  detail, Ask Lamina drafting, Ethan approval, and grounded monitoring.
-- **Network** — published backend forum threads plus live NPPES physician directory search.
-- **Review Inbox** — Lianne's real pending grounded response drafts, private evidence review, and
-  approval action.
-- **Profile** — read-only backend physician, agent, organization, configuration, and safe Medplum
-  connection state.
-
-Reusable layout, cards, badges, typography, colors, and responsive styling were retained. The old
-static feed, article graph, generic assistant, fake publication center, fake connection mutations,
-fake setup, fake signup, and timer-based success flows were removed from the active source tree.
+`frontend/src/demo/showcaseFeed.ts` is the single source of fictional physicians, discussions,
+reports, locations, proximity, and social counts. `frontend/src/demo/demoConnections.ts` stores
+showcase-only connections under `lamina_demo_connections`, scoped by signed-in NPI. Neither module
+is used by approval, monitoring, Medplum, referral, or review workflows.
 
 There is one AI architecture:
 
@@ -99,6 +95,15 @@ The sign-in screen is explicitly a synthetic physician selector with no password
 of production security. **Switch physician / Sign out** clears the selected identity and all
 patient/post UI navigation keys, then returns to the selector. It does not mutate any backend
 record, agent lifecycle state, forum content, or Medplum data.
+
+Showcase connections persist in browser local storage under `lamina_demo_connections`, keyed by
+the current demo physician NPI. To clear only this demo social state from browser developer tools:
+
+```js
+localStorage.removeItem('lamina_demo_connections')
+```
+
+The database reset intentionally does not manipulate browser storage.
 
 ## Safe patient APIs
 
@@ -147,9 +152,10 @@ must not be used by public frontend components.
 
 ## Ask Lamina and physician approval
 
-Patient detail and Network pages include one reusable, understated **Ask Lamina** composer. It is a
-contextual command surface, not a chat sidebar and not a second agent architecture. It has no
-conversation history, avatar, floating orb, or autonomous clinical-answer path.
+Desktop pages use one persistent right-hand **Ask Lamina** command panel. It changes context for
+Home, My Patients, patient detail, Publication Center, Agent Setup, Connections, Physicians, and
+profiles. It is not a generic medical chatbot and has no conversation history, avatar, floating
+orb, or autonomous clinical-answer path.
 
 On a patient detail page, the composer receives the current backend-derived physician NPI and the
 selected physician-scoped `patient_ref`. Supported natural-language question requests call the
@@ -157,15 +163,16 @@ same endpoint documented below and render the returned approval-required draft. 
 is recognized but returns an explicit unsupported message because referral persistence and
 approval endpoints do not exist.
 
-On Network, the composer calls the existing published forum route with its bounded `q` filter:
+On Home, supported search requests call the existing published forum route with its bounded `q`
+filter and also filter the isolated showcase fixtures locally:
 
 ```http
 GET /forum/posts?status=published&q=SGLT2%20inhibitors
 ```
 
 This searches titles, clinical questions, context summaries, and specialty tags for published
-records only. It does not call a model or expose drafts. Review and Profile hide the composer
-because there is no safe backend revision/explanation action to invoke there.
+records only. It does not call a model or expose drafts. Other screens provide bounded navigation,
+filter, or explanatory actions and return an honest unsupported result when no workflow exists.
 
 The microphone control is disabled with visible explanatory copy. Deepgram/backend transcription
 is not implemented, so the frontend does not request microphone access or fabricate listening and
@@ -196,9 +203,42 @@ POST /forum/posts/{post_id}/approve
 After approval, the UI uses returned backend state and the published thread. It never toggles a
 local publication flag as a substitute for approval.
 
-## Network and NPPES directory
+## Global Post composer
 
-The Network page uses:
+The rust **Post** button is available below the primary navigation and above the signed-in
+physician identity on every authenticated screen. It opens an overlay without changing the
+current page and always derives authorship from `CurrentPhysician`.
+
+The Question flow is `compose -> review -> publish`. A question without patient context creates a
+real manual draft through:
+
+```http
+POST /forum/posts/drafts
+POST /forum/posts/{post_id}/approve
+```
+
+The first request persists the physician-authored title, question, context summary, topics, and
+synthetic case classification. The second remains the authoritative physician approval step. On
+success the browser opens the returned published post on Home; a refresh reads it back from
+FastAPI rather than browser state.
+
+When the composer is opened from a patient detail page, it offers an explicit **Use current
+patient context** checkbox. Selecting it routes generation through the existing
+physician-scoped, opaque `patient_ref` endpoint described above. It never sends Medplum IDs or raw
+FHIR from the browser and still requires the review screen plus the real approval route.
+
+The backend has no article content type. Article mode therefore provides a visible manual-composer
+shell marked **Backend support required**, with publication disabled as **Article publishing
+deferred**. It does not create a discussion, call AI, or simulate a successful article.
+
+Cancel, the close control, and Escape close the overlay without publishing. No partial manual
+question is persisted before **Publish**; a bounded patient-assisted draft is created only when the
+physician explicitly selects patient context and continues to review, and remains unpublished
+unless approved.
+
+## Home, connections, and physician directory
+
+Home uses the forum routes, while Physicians uses the NPPES routes:
 
 ```http
 GET /forum/posts?status=published
@@ -207,9 +247,16 @@ GET /physicians/search?q={query}&state={optional_state}&limit=20
 GET /physicians/{npi}
 ```
 
-Only actual published posts and responses are shown. There are no engagement counters or static
-articles. Directory results distinguish NPPES-backed unclaimed/reserved profiles from active
-synthetic demo physicians; directory presence never implies Lamina participation.
+Real posts display only real response counts and always appear before showcase items. Fictional
+showcase posts are labeled in the UI and may display static likes, responses, and views from the
+single fixture. They have no post IDs recognized by FastAPI and cannot enter clinical workflows.
+NPPES results never receive showcase activity, proximity, or connection controls.
+
+Agent Setup saves monitoring topics, declared expertise, response-drafting enablement, report
+cadence, report topics, scope, length, notifications, and approval policy through the existing
+`PUT /agents/{agent_id}/configuration` route. Activity frequency is explicitly a demo scheduling
+preference in `lamina_demo_activity_frequency`; only its off/on drafting state is persisted to the
+backend because no scheduler exists. Report cadence (`none`, `weekly`, `monthly`) is backend state.
 
 ## Grounded specialist monitoring and review
 
@@ -223,8 +270,8 @@ The UI renders the actual `candidate`, `physician_name`, `outcome`, `matched_cas
 `response_id`. The backend Agents SDK remains responsible for panel-scoped retrieval and drafting.
 No response is fabricated if the backend abstains or fails.
 
-The selected physician's Review page uses their own NPI for every inbox, grounding-review, and
-approval call. During the guided flow, Lianne's calls are:
+The selected physician's Publication Center uses their own NPI for every inbox, grounding-review,
+and approval call. During the guided flow, Lianne's calls are:
 
 ```http
 GET  /physicians/9000001000/review-inbox
@@ -306,14 +353,14 @@ The reset makes a selective application-row backup under `data/processed/backups
 or modifies the NPPES directory or the preserved physician, organization, activation, and Medplum
 mapping state.
 
-1. Open the app and confirm the Network has zero discussions.
+1. Open Home and review the five fictional showcase feed items.
 2. Select **Ethan Bell, MD, MS** and open his authorized synthetic patient.
 3. Review bounded Medplum context, enter the question, and generate the real draft.
-4. Approve and publish as Ethan; Network now contains exactly that one post.
+4. Approve and publish as Ethan; the real post appears above showcase content on Home.
 5. Run **Search physician network** and confirm Lianne is found with one authorized similar case.
 6. Use **Switch physician / Sign out**, then select **Lianne Cha, MD**.
-7. Open **Review**, inspect the real persisted Medplum-grounded response, and approve it.
-8. Sign out, sign back in as Ethan, and open the Network thread.
+7. Open **Publication Center**, inspect the real persisted Medplum-grounded response, and approve it.
+8. Sign out, sign back in as Ethan, and open the Home thread.
 9. Confirm Ethan's question and Lianne's approved response persist after refresh.
 10. Search for a real physician and confirm the NPPES result remains unclaimed/reserved.
 
@@ -321,7 +368,7 @@ mapping state.
 
 - Production authentication is deferred; the current two-profile selector is explicit demo state.
 - Deepgram voice capture is not implemented, so Ask Lamina is typed only.
-- Connection/referral persistence has no backend route and is therefore omitted.
+- Showcase connections are demo-local browser state only; referral persistence remains unsupported.
 - Post editing is omitted because no safe existing edit endpoint is available.
 - Medplum export remains a backend capability but is not exposed in this simplified primary flow.
 - Scheduled/background monitoring and network intelligence reports remain future work.

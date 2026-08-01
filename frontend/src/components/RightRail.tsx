@@ -1,84 +1,49 @@
-import type {
-  AgentDetails,
-  OrganizationMember,
-  OrganizationSummary,
-} from '../api/client'
-import type { NavKey } from './Sidebar'
-import { PhysicianAvatar } from './PhysicianAvatar'
+import type { AgentDetails } from '../api/client'
+import { AskLaminaComposer } from './AskLaminaComposer'
 import { Badge } from './ui'
 
+export type AskLaminaConfiguration = {
+  contextLabel: string
+  placeholder: string
+  processingLabel: string
+  suggestions?: string[]
+  onSubmit: (request: string) => Promise<string>
+}
+
 export function RightRail({
-  active,
   physician,
-  organization,
-  members,
+  configuration,
 }: {
-  active: NavKey
   physician: AgentDetails
-  organization: OrganizationSummary | null
-  members: OrganizationMember[]
+  configuration: AskLaminaConfiguration
 }) {
-  const pageLabels: Record<NavKey, string> = {
-    patients: 'Patient workspace',
-    network: 'Physician network',
-    reviews: 'Publication review',
-    profile: 'Professional profile',
-  }
-
   return (
-    <aside className="right-rail" aria-label="Workspace context">
-      <section className="rail-card rail-context-card">
-        <div className="eyebrow">Current workspace</div>
-        <h2 className="publication-title mt-2">{pageLabels[active]}</h2>
+    <aside className="right-rail ask-right-rail" aria-label="Ask Lamina">
+      <section className="rail-card ask-panel-card">
+        <div className="flex items-center justify-between gap-3">
+          <div className="eyebrow">Ask Lamina</div>
+          <Badge tone="clinical">Network tools</Badge>
+        </div>
+        <h2 className="publication-title mt-3">How can Lamina help?</h2>
         <p className="secondary-copy mt-2">
-          {organization?.name ?? 'Independent physician workspace'}
+          Work with your physician network or the current bounded patient context.
         </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Badge tone="success">Synthetic demo</Badge>
-          <Badge tone="clinical">Approval required</Badge>
+        <div className="ask-panel-context mt-4">
+          <span>Current context</span>
+          <strong>{configuration.contextLabel}</strong>
         </div>
+        <AskLaminaComposer
+          contextLabel={physician.physician.display_name}
+          placeholder={configuration.placeholder}
+          processingLabel={configuration.processingLabel}
+          suggestions={configuration.suggestions}
+          onSubmit={configuration.onSubmit}
+          panel
+        />
       </section>
-
-      <section className="rail-card">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 className="section-title text-lg">Your network</h2>
-          <span className="metadata">{members.length} members</span>
-        </div>
-        <div className="mt-4 space-y-4">
-          {members.map((member) => (
-            <div key={member.agent_id} className="rail-physician-row">
-              <PhysicianAvatar
-                npi={member.physician_npi}
-                name={member.physician_name}
-                size="small"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="physician-name leading-tight font-bold">
-                  {member.physician_name}
-                </div>
-                <div className="metadata mt-0.5 truncate">
-                  {member.verified_specialty || 'Specialty not listed'}
-                </div>
-              </div>
-              {member.physician_npi === physician.physician_npi && (
-                <span className="rail-you-label">You</span>
-              )}
-            </div>
-          ))}
-          {members.length === 0 && (
-            <p className="secondary-copy">No organization members were returned.</p>
-          )}
-        </div>
-      </section>
-
-      <section className="rail-card rail-trust-card">
-        <div className="eyebrow text-[var(--clinical)]">Clinical safeguards</div>
-        <ul className="rail-trust-list mt-3">
-          <li>Physicians approve every clinical publication.</li>
-          <li>Patient context stays bounded and synthetic.</li>
-          <li>Medplum credentials remain server-side.</li>
-        </ul>
-      </section>
+      <p className="ask-panel-safety">
+        Lamina routes supported actions through existing physician-network workflows. It does not provide generic medical chat.
+      </p>
     </aside>
   )
 }

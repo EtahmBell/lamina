@@ -7,14 +7,17 @@ import {
 } from '../api/client'
 import { displayError, formatTimestamp } from '../utils'
 import { PhysicianAvatar } from './PhysicianAvatar'
+import type { AskLaminaConfiguration } from './RightRail'
 import { Badge, ErrorBanner } from './ui'
 
 export function ProfilePage({
   physician,
   organization,
+  onAskChange,
 }: {
   physician: AgentDetails
   organization: OrganizationSummary | null
+  onAskChange: (configuration: AskLaminaConfiguration) => void
 }) {
   const [integration, setIntegration] = useState<MedplumIntegration | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -25,6 +28,17 @@ export function ProfilePage({
       setError(displayError(loadError))
     })
   }, [organization])
+
+  useEffect(() => {
+    onAskChange({
+      contextLabel: `${physician.physician.display_name} · professional profile`,
+      placeholder: 'Ask about this profile or configuration...',
+      processingLabel: 'Reviewing profile context...',
+      suggestions: ['Show my verified specialty', 'What requires physician approval?'],
+      onSubmit: async () =>
+        `${physician.physician.display_name} is configured for ${physician.physician.primary_specialty}. All clinical publication continues to require physician approval.`,
+    })
+  }, [onAskChange, physician.physician.display_name, physician.physician.primary_specialty])
 
   return (
     <div className="page-shell">

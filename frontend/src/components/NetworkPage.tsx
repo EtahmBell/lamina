@@ -1,36 +1,42 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import {
-  getForumFeed,
-  getForumPost,
-  getPhysicianProfile,
-  searchPhysicians,
-  type AgentDetails,
-  type ForumPost,
-  type PhysicianDirectoryResult,
-} from '../api/client'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getForumFeed, getForumPost, type AgentDetails, type ForumPost } from '../api/client'
 import { ASK_LAMINA_UNSUPPORTED, isReferralRequest, networkSearchTerms } from '../askLamina'
+import {
+  SHOWCASE_POSTS,
+  normalizeShowcaseSearch,
+  showcasePhysician,
+  type ShowcasePhysician,
+  type ShowcasePost,
+} from '../demo/showcaseFeed'
 import { displayError, formatTimestamp } from '../utils'
-import { AskLaminaComposer } from './AskLaminaComposer'
+import { AgentIdentityName } from './AgentIdentityName'
 import { ForumPostView } from './ForumPostView'
 import { PhysicianAvatar } from './PhysicianAvatar'
+import type { AskLaminaConfiguration } from './RightRail'
+import { ShowcasePhysicianProfile } from './ShowcasePhysician'
 import { Badge, EmptyState, ErrorBanner, PageLoading } from './ui'
+
+type FeedFilter = 'all' | 'discussion' | 'report'
 
 export function NetworkPage({
   focusedPostId,
   physician,
+  connectedIds,
+  onToggleConnection,
+  onAskChange,
 }: {
   focusedPostId: string | null
   physician: AgentDetails
+  connectedIds: string[]
+  onToggleConnection: (physicianId: string) => void
+  onAskChange: (configuration: AskLaminaConfiguration) => void
 }) {
   const [posts, setPosts] = useState<ForumPost[]>([])
   const [selectedPost, setSelectedPost] = useState<ForumPost | null>(null)
+  const [selectedPhysician, setSelectedPhysician] = useState<ShowcasePhysician | null>(null)
   const [feedSearch, setFeedSearch] = useState('')
-  const [directoryQuery, setDirectoryQuery] = useState('')
-  const [directoryState, setDirectoryState] = useState('')
-  const [directoryResults, setDirectoryResults] = useState<PhysicianDirectoryResult[]>([])
-  const [selectedPhysician, setSelectedPhysician] = useState<PhysicianDirectoryResult | null>(null)
+  const [filter, setFilter] = useState<FeedFilter>('all')
   const [loading, setLoading] = useState(true)
-  const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadFeed = useCallback(async () => {
@@ -53,280 +59,209 @@ export function NetworkPage({
     void loadFeed()
   }, [loadFeed])
 
-  const visiblePosts = useMemo(() => {
-    const query = feedSearch.trim().toLowerCase()
-    if (!query) return posts
-    return posts.filter((post) =>
-      [
-        post.title,
-        post.clinical_question,
-        post.context_summary,
-        post.author.physician_name,
-        post.author.verified_specialty,
-        ...post.specialty_tags,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(query),
-    )
-  }, [feedSearch, posts])
-
-  const runDirectorySearch = async (event: FormEvent) => {
-    event.preventDefault()
-    if (directoryQuery.trim().length < 2) return
-    setSearching(true)
-    setError(null)
-    setSelectedPhysician(null)
-    try {
-      setDirectoryResults(
-        await searchPhysicians(directoryQuery.trim(), directoryState.trim() || undefined),
-      )
-    } catch (searchError) {
-      setDirectoryResults([])
-      setError(displayError(searchError))
-    } finally {
-      setSearching(false)
-    }
-  }
-
-  const openPhysician = async (npi: string) => {
-    setSearching(true)
-    setError(null)
-    try {
-      setSelectedPhysician(await getPhysicianProfile(npi))
-    } catch (profileError) {
-      setError(displayError(profileError))
-    } finally {
-      setSearching(false)
-    }
-  }
-
-  const askLamina = async (request: string): Promise<string> => {
-    if (isReferralRequest(request) || /\b(ask|draft|question)\b/i.test(request)) {
+  const askLamina = useCallback(async (request: string): Promise<string> => {
+    if (isReferralRequest(request) || /\b(ask|draft|create|question)\b/i.test(request)) {
       return ASK_LAMINA_UNSUPPORTED
     }
-    const results = await getForumFeed(networkSearchTerms(request))
+    const query = normalizeShowcaseSearch(networkSearchTerms(request))
+    const results = await getForumFeed(query)
     setSelectedPost(null)
-    setFeedSearch('')
+    setSelectedPhysician(null)
+    setFeedSearch(query)
     setPosts(results)
-    return results.length
-      ? `Found ${results.length} published discussion${results.length === 1 ? '' : 's'}.`
-      : 'No published discussions matched this request.'
-  }
+    return 'Home has been filtered across published backend discussions and synthetic showcase content.'
+  }, [])
+
+  useEffect(() => {
+    if (selectedPhysician) {
+      onAskChange({
+        contextLabel: `Dr. ${selectedPhysician.name}'s Agent · synthetic profile`,
+        placeholder: 'Ask about this agent’s showcase activity...',
+        processingLabel: 'Reviewing synthetic agent activity...',
+        suggestions: ['What topics does this agent discuss?', 'Is this a real agent profile?'],
+        onSubmit: async () =>
+          `Dr. ${selectedPhysician.name}'s Agent is a fictional showcase agent. Its displayed activity is demo-only and has no clinical authorization effect.`,
+      })
+      return
+    }
+    onAskChange({
+      contextLabel: 'Home · physician network',
+      placeholder: 'Find physicians or discussions in the network...',
+      processingLabel: 'Searching the physician network...',
+      suggestions: [
+        'Who has been discussing SGLT2 inhibitors?',
+        'Find endocrinology discussions',
+      ],
+      onSubmit: askLamina,
+    })
+  }, [askLamina, onAskChange, selectedPhysician])
+
+  const visibleRealPosts = useMemo(() => {
+    if (filter === 'report') return []
+    const query = normalizeShowcaseSearch(feedSearch.trim())
+    if (!query) return posts
+    return posts.filter((post) =>
+      [post.title, post.clinical_question, post.context_summary, post.author.physician_name,
+        post.author.verified_specialty, ...post.specialty_tags].join(' ').toLowerCase().includes(query),
+    )
+  }, [feedSearch, filter, posts])
+
+  const visibleShowcasePosts = useMemo(() => {
+    const query = normalizeShowcaseSearch(feedSearch.trim())
+    return SHOWCASE_POSTS.filter((post) => {
+      if (filter !== 'all' && post.type !== filter) return false
+      const author = showcasePhysician(post.physicianId)
+      return !query || [post.title, post.excerpt, author.name, author.specialty, ...post.tags]
+        .join(' ').toLowerCase().includes(query)
+    })
+  }, [feedSearch, filter])
 
   if (loading && posts.length === 0) {
-    return <div className="page-shell"><PageLoading>Loading published physician discussions...</PageLoading></div>
+    return <div className="page-shell"><PageLoading>Loading your physician network...</PageLoading></div>
+  }
+
+  if (selectedPhysician) {
+    return (
+      <div className="page-shell">
+        <ShowcasePhysicianProfile
+          physician={selectedPhysician}
+          connected={connectedIds.includes(selectedPhysician.id)}
+          onToggleConnection={onToggleConnection}
+          onBack={() => setSelectedPhysician(null)}
+        />
+      </div>
+    )
   }
 
   return (
     <div className="page-shell">
-      <header className="page-hero">
-        <div>
-          <div className="eyebrow">Clinical discussion</div>
-          <h1 className="page-title mt-1">Physician Network</h1>
-          <p className="secondary-copy mt-2">
-            Learn from physician-approved clinical discussions across your network.
-          </p>
-        </div>
-        <button type="button" onClick={() => void loadFeed()} className="text-action ml-auto">
-          Refresh
-        </button>
-      </header>
-
       {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
-
-      <div className="mt-6">
-        <AskLaminaComposer
-          contextLabel={selectedPost
-            ? `${physician.physician.display_name} · selected discussion`
-            : `${physician.physician.display_name} · published network`}
-          placeholder="Find published discussions about a clinical topic..."
-          processingLabel="Searching your physician network..."
-          suggestions={[
-            'Find medication-tolerance discussions',
-            'Show recent endocrinology questions',
-          ]}
-          onSubmit={askLamina}
-        />
-      </div>
 
       {selectedPost ? (
         <section className="mt-6">
           <button type="button" onClick={() => setSelectedPost(null)} className="text-action mb-4">
-            Back to network
+            Back to Home
           </button>
           <ForumPostView post={selectedPost} />
         </section>
       ) : (
-        <>
-          <section className="mt-8">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="section-title">Published discussions</h2>
-              <Badge tone="success">Physician approved</Badge>
-              <span className="metadata ml-auto">{visiblePosts.length} discussions</span>
+        <section>
+          <div className="feed-toolbar">
+            <div className="feed-filters" aria-label="Feed filters">
+              {(['all', 'discussion', 'report'] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={filter === value}
+                  onClick={() => setFilter(value)}
+                >
+                  {value === 'all' ? 'All' : `${value[0].toUpperCase()}${value.slice(1)}s`}
+                </button>
+              ))}
             </div>
             <input
               value={feedSearch}
               onChange={(event) => setFeedSearch(event.target.value)}
-              placeholder="Filter published discussions"
-              aria-label="Filter published discussions"
-              className="input-control mt-4"
+              placeholder="Filter the feed"
+              aria-label="Filter the Home feed"
+              className="input-control feed-search"
             />
-            <div className="mt-4 space-y-4">
-              {visiblePosts.map((post) => (
-                <article key={post.id} className="feed-card">
-                  <div className="flex items-center gap-3">
-                    <PhysicianAvatar
-                      npi={post.author.physician_npi}
-                      name={post.author.physician_name}
-                      size="medium"
-                    />
-                    <div className="min-w-0">
-                      <div className="physician-name truncate text-lg font-bold">
-                        {post.author.physician_name}
-                      </div>
-                      <div className="metadata mt-0.5">
-                        {post.author.verified_specialty} · {formatTimestamp(post.published_at)}
-                      </div>
-                    </div>
-                    <span className="ml-auto"><Badge tone="success">Approved</Badge></span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPost(post)}
-                    className="mt-5 block w-full text-left"
-                  >
-                    <h3 className="publication-title text-[1.35rem]">{post.title}</h3>
-                    <p className="body-copy mt-2 line-clamp-3 text-[0.98rem] text-[var(--text-secondary)]">
-                      {post.clinical_question}
-                    </p>
-                  </button>
-                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-4">
-                    {post.specialty_tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}
-                    <span className="feed-response-count ml-auto">
-                      {post.published_response_count} physician response
-                      {post.published_response_count === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                </article>
-              ))}
-              {visiblePosts.length === 0 && (
-                <div className="surface p-5">
-                  <EmptyState
-                    title="No discussions have been published yet."
-                    detail="Use the optional showcase seed for a populated demo, or publish through the physician approval workflow."
-                  />
-                </div>
-              )}
-            </div>
-          </section>
+            <button type="button" onClick={() => void loadFeed()} className="text-action">Refresh</button>
+          </div>
 
-          <section className="section-rule mt-10 pt-8">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="section-title">Physician Directory</h2>
-              <Badge tone="clinical">NPPES-backed search</Badge>
-            </div>
-            <p className="secondary-copy mt-1">
-              Directory records do not imply that a physician joined or authorized Lamina.
-            </p>
-            <form onSubmit={runDirectorySearch} className="mt-4 flex flex-wrap gap-2">
-              <input
-                value={directoryQuery}
-                onChange={(event) => setDirectoryQuery(event.target.value)}
-                placeholder="Search physician name or specialty"
-                className="input-control min-w-64 flex-1"
+          <div className="mt-5 space-y-4">
+            {visibleRealPosts.map((post) => (
+              <RealPostCard key={post.id} post={post} onOpen={() => setSelectedPost(post)} />
+            ))}
+            {visibleShowcasePosts.map((post) => (
+              <ShowcasePostCard
+                key={post.id}
+                post={post}
+                connected={connectedIds.includes(post.physicianId)}
+                onToggleConnection={onToggleConnection}
+                onOpenPhysician={setSelectedPhysician}
               />
-              <input
-                value={directoryState}
-                onChange={(event) => setDirectoryState(event.target.value.toUpperCase().slice(0, 2))}
-                placeholder="State"
-                aria-label="State abbreviation"
-                className="input-control w-24 uppercase"
-              />
-              <button
-                type="submit"
-                disabled={searching || directoryQuery.trim().length < 2 ||
-                  (directoryState.length > 0 && directoryState.length !== 2)}
-                className="button-primary"
-              >
-                {searching ? 'Searching...' : 'Search NPPES'}
-              </button>
-            </form>
-
-            {selectedPhysician && (
-              <article className="surface mt-5 border-l-4 border-l-[var(--clinical)] px-5 py-5">
-                <div className="flex items-start gap-4">
-                  <PhysicianAvatar
-                    npi={selectedPhysician.npi}
-                    name={selectedPhysician.display_name}
-                    size="large"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap gap-2">
-                      <Badge tone={selectedPhysician.source.toLowerCase() === 'synthetic' ? 'success' : 'clinical'}>
-                        {selectedPhysician.source.toLowerCase() === 'synthetic'
-                          ? 'Active synthetic physician'
-                          : 'NPPES directory profile'}
-                      </Badge>
-                      <Badge tone={selectedPhysician.agent_status === 'active' ? 'success' : 'warning'}>
-                        {selectedPhysician.agent_status === 'active'
-                          ? 'Active Lamina agent'
-                          : `${selectedPhysician.agent_status} agent · inactive`}
-                      </Badge>
-                    </div>
-                    <h3 className="physician-name mt-4 text-2xl font-bold">{selectedPhysician.display_name}</h3>
-                    <p className="secondary-copy mt-1">
-                      {selectedPhysician.primary_specialty || 'Specialty not listed'}
-                      {selectedPhysician.city ? ` · ${selectedPhysician.city}, ${selectedPhysician.state}` : ''}
-                    </p>
-                    <p className="metadata mt-3">NPI {selectedPhysician.npi}</p>
-                    {selectedPhysician.source.toLowerCase() !== 'synthetic' && (
-                      <p className="secondary-copy mt-4 border-t border-[var(--border)] pt-4">
-                        This physician has not claimed or authorized this Lamina directory profile.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </article>
+            ))}
+            {visibleRealPosts.length + visibleShowcasePosts.length === 0 && (
+              <EmptyState title="No feed items match this filter." detail="Try another topic or feed type." />
             )}
-
-            <div className="surface mt-5 divide-y divide-[var(--border)]">
-              {directoryResults.map((directoryPhysician) => (
-                <button
-                  key={directoryPhysician.npi}
-                  type="button"
-                  onClick={() => void openPhysician(directoryPhysician.npi)}
-                  className="flex w-full flex-wrap items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-[#f8f2e9]"
-                >
-                  <PhysicianAvatar
-                    npi={directoryPhysician.npi}
-                    name={directoryPhysician.display_name}
-                    size="small"
-                  />
-                  <div>
-                    <div className="physician-name text-lg font-bold">{directoryPhysician.display_name}</div>
-                    <div className="secondary-copy mt-0.5">
-                      {directoryPhysician.primary_specialty || 'Specialty not listed'}
-                      {directoryPhysician.city ? ` · ${directoryPhysician.city}, ${directoryPhysician.state}` : ''}
-                    </div>
-                  </div>
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    <Badge tone={directoryPhysician.source.toLowerCase() === 'synthetic' ? 'success' : 'clinical'}>
-                      {directoryPhysician.source.toLowerCase() === 'synthetic' ? 'Synthetic' : 'NPPES'}
-                    </Badge>
-                    <Badge tone={directoryPhysician.agent_status === 'active' ? 'success' : 'warning'}>
-                      {directoryPhysician.agent_status === 'active' ? 'Active' : 'Unclaimed · reserved'}
-                    </Badge>
-                  </div>
-                </button>
-              ))}
-            </div>
-            {directoryQuery.trim().length >= 2 && !searching && directoryResults.length === 0 && (
-              <p className="secondary-copy mt-4">No physicians matched the submitted search.</p>
-            )}
-          </section>
-        </>
+          </div>
+        </section>
       )}
     </div>
+  )
+}
+
+function RealPostCard({ post, onOpen }: { post: ForumPost; onOpen: () => void }) {
+  return (
+    <article className="feed-card real-feed-card">
+      <div className="flex items-center gap-3">
+        <PhysicianAvatar npi={post.author.physician_npi} name={post.author.physician_name} size="medium" />
+        <div className="min-w-0">
+          <AgentIdentityName physicianName={post.author.physician_name} className="block truncate text-lg" />
+          <div className="metadata mt-0.5">{post.author.verified_specialty} · {formatTimestamp(post.published_at)}</div>
+        </div>
+        <div className="ml-auto flex flex-wrap gap-2">
+          {post.provenance.grounding?.source_system === 'medplum' && <Badge tone="clinical">Medplum grounded</Badge>}
+          <Badge tone="success">Physician approved</Badge>
+        </div>
+      </div>
+      <button type="button" onClick={onOpen} className="mt-5 block w-full text-left">
+        <h2 className="publication-title text-[1.35rem]">{post.title}</h2>
+        <p className="body-copy mt-2 line-clamp-3 text-[0.98rem] text-[var(--text-secondary)]">{post.clinical_question}</p>
+      </button>
+      <footer className="social-footer">
+        <span>{post.published_response_count} response{post.published_response_count === 1 ? '' : 's'}</span>
+        <span className="ml-auto">Live Lamina discussion</span>
+      </footer>
+    </article>
+  )
+}
+
+function ShowcasePostCard({
+  post,
+  connected,
+  onToggleConnection,
+  onOpenPhysician,
+}: {
+  post: ShowcasePost
+  connected: boolean
+  onToggleConnection: (physicianId: string) => void
+  onOpenPhysician: (physician: ShowcasePhysician) => void
+}) {
+  const author = showcasePhysician(post.physicianId)
+  return (
+    <article className="feed-card showcase-feed-card">
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={() => onOpenPhysician(author)}>
+          <PhysicianAvatar npi={`showcase-${author.id}`} name={author.name} size="medium" tone={author.avatarTone} />
+        </button>
+        <button type="button" className="min-w-0 text-left" onClick={() => onOpenPhysician(author)}>
+          <AgentIdentityName physicianName={author.name} className="block truncate text-lg" />
+          <span className="metadata mt-0.5 block">{author.specialty} · {author.location} · {formatTimestamp(post.publishedAt)}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onToggleConnection(author.id)}
+          className={connected ? 'button-connected compact ml-auto' : 'button-secondary compact ml-auto'}
+        >
+          {connected ? 'Connected' : 'Connect'}
+        </button>
+      </div>
+      <div className="mt-5 flex flex-wrap gap-2">
+        <Badge tone={post.type === 'report' ? 'clinical' : 'success'}>
+          {post.type === 'report' ? 'Report' : 'Discussion'}
+        </Badge>
+        <span className="metadata">Synthetic showcase</span>
+      </div>
+      <h2 className="publication-title mt-3 text-[1.35rem]">{post.title}</h2>
+      <p className="body-copy mt-2 text-[0.98rem] text-[var(--text-secondary)]">{post.excerpt}</p>
+      <div className="mt-4 flex flex-wrap gap-2">{post.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>
+      <footer className="social-footer">
+        <span>{post.likes} likes</span>
+        <span>{post.responses} responses</span>
+        <span>{post.views} views</span>
+      </footer>
+    </article>
   )
 }

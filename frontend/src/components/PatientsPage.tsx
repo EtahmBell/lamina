@@ -19,8 +19,9 @@ import {
   isReferralRequest,
 } from '../askLamina'
 import { displayError } from '../utils'
-import { AskLaminaComposer } from './AskLaminaComposer'
 import { ForumPostView } from './ForumPostView'
+import type { AskLaminaConfiguration } from './RightRail'
+import type { PatientPostContext } from './PostComposerModal'
 import { Badge, EmptyState, ErrorBanner, PageLoading, PrimaryButton } from './ui'
 
 const selectedPatientKey = (physicianNpi: string) =>
@@ -51,10 +52,14 @@ export function PatientsPage({
   physician,
   organizationName,
   onOpenNetwork,
+  onAskChange,
+  onPatientContextChange,
 }: {
   physician: AgentDetails
   organizationName: string | null
   onOpenNetwork: (postId: string) => void
+  onAskChange: (configuration: AskLaminaConfiguration) => void
+  onPatientContextChange: (context: PatientPostContext | null) => void
 }) {
   const [patients, setPatients] = useState<PatientSummary[]>([])
   const [selectedRef, setSelectedRef] = useState<string | null>(() =>
@@ -158,7 +163,7 @@ export function PatientsPage({
     }
   }
 
-  const generate = async (request: string): Promise<string> => {
+  const generate = useCallback(async (request: string): Promise<string> => {
     if (isReferralRequest(request) || !isNetworkQuestionRequest(request)) {
       return ASK_LAMINA_UNSUPPORTED
     }
@@ -184,7 +189,39 @@ export function PatientsPage({
     } finally {
       setPending(null)
     }
-  }
+  }, [pending, physician.physician_npi, selectedRef])
+
+  useEffect(() => {
+    if (caseContext && selectedRef) {
+      onAskChange({
+        contextLabel: `${caseContext.display_name} · bounded Medplum context`,
+        placeholder: 'Ask the network about this synthetic patient context...',
+        processingLabel: 'Preparing a real approval-required network question...',
+        suggestions: [
+          'Has anyone seen something similar?',
+          'Draft a question about this medication pattern',
+        ],
+        onSubmit: generate,
+      })
+      return
+    }
+    onAskChange({
+      contextLabel: 'My Patients · authorized synthetic panel',
+      placeholder: 'Select a patient to work with bounded case context...',
+      processingLabel: 'Reviewing patient workspace context...',
+      suggestions: ['How does patient context stay private?'],
+      onSubmit: async () =>
+        'Select an authorized synthetic patient before drafting a grounded physician-network question.',
+    })
+  }, [caseContext, generate, onAskChange, selectedRef])
+
+  useEffect(() => {
+    onPatientContextChange(
+      caseContext && selectedRef
+        ? { patientRef: selectedRef, displayName: caseContext.display_name }
+        : null,
+    )
+  }, [caseContext, onPatientContextChange, selectedRef])
 
   const approve = () =>
     run('publishing', async () => {
@@ -344,19 +381,6 @@ export function PatientsPage({
               items={caseContext.observations.map((item) =>
                 [item.display, item.value_summary, item.effective_date].filter(Boolean).join(' · '),
               )}
-            />
-          </div>
-
-          <div className="mt-7">
-            <AskLaminaComposer
-              contextLabel={`${physician.physician.display_name} · ${caseContext.display_name}`}
-              placeholder="Ask about this patient or your physician network..."
-              processingLabel="Preparing a network question..."
-              suggestions={[
-                'Draft a de-identified network question',
-                'Ask the network about medication tolerance',
-              ]}
-              onSubmit={generate}
             />
           </div>
 

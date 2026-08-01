@@ -1,32 +1,53 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   getAgent,
   getOrganizationMembers,
   getOrganizations,
   type AgentDetails,
-  type OrganizationMember,
   type OrganizationSummary,
 } from './api/client'
 import { NetworkPage } from './components/NetworkPage'
+import { AgentSetupPage } from './components/AgentSetupPage'
+import { ConnectionsPage } from './components/ConnectionsPage'
 import { PatientsPage } from './components/PatientsPage'
+import { PhysiciansPage } from './components/PhysiciansPage'
 import { ProfilePage } from './components/ProfilePage'
+import {
+  PostComposerModal,
+  type PatientPostContext,
+} from './components/PostComposerModal'
 import { ReviewInboxPage } from './components/ReviewInboxPage'
 import { SignInPage } from './components/SignInPage'
 import { Sidebar, type NavKey } from './components/Sidebar'
-import { RightRail } from './components/RightRail'
+import { RightRail, type AskLaminaConfiguration } from './components/RightRail'
 import { ErrorBanner, PageLoading } from './components/ui'
 import { useDemoSession } from './DemoSessionContext'
 import { DEMO_IDENTITIES } from './session'
 import { displayError } from './utils'
+import { getDemoConnections, saveDemoConnections } from './demo/demoConnections'
+
+const DEFAULT_ASK_CONFIGURATION: AskLaminaConfiguration = {
+  contextLabel: 'Lamina physician workspace',
+  placeholder: 'Ask about your network or current workflow...',
+  processingLabel: 'Reviewing the current Lamina context...',
+  suggestions: ['What can Lamina help with?'],
+  onSubmit: async () =>
+    'Lamina can help you ask the physician network, find specialists, and work with your current patient context.',
+}
 
 export default function App() {
   const { identity, signIn, signOut } = useDemoSession()
-  const [nav, setNav] = useState<NavKey>('patients')
+  const [nav, setNav] = useState<NavKey>('home')
   const [physician, setPhysician] = useState<AgentDetails | null>(null)
   const [signInProfiles, setSignInProfiles] = useState<AgentDetails[]>([])
   const [organization, setOrganization] = useState<OrganizationSummary | null>(null)
-  const [organizationMembers, setOrganizationMembers] = useState<OrganizationMember[]>([])
   const [focusedPostId, setFocusedPostId] = useState<string | null>(null)
+  const [connectedIds, setConnectedIds] = useState<string[]>([])
+  const [askConfiguration, setAskConfiguration] = useState<AskLaminaConfiguration>(
+    DEFAULT_ASK_CONFIGURATION,
+  )
+  const [postComposerOpen, setPostComposerOpen] = useState(false)
+  const [patientPostContext, setPatientPostContext] = useState<PatientPostContext | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -36,7 +57,6 @@ export default function App() {
       setError(null)
       setPhysician(null)
       setOrganization(null)
-      setOrganizationMembers([])
       try {
         if (!identity) {
           setSignInProfiles(
@@ -49,6 +69,7 @@ export default function App() {
           getOrganizations(),
         ])
         setPhysician(agent)
+        setConnectedIds(getDemoConnections(identity.npi))
         const membershipResults = await Promise.all(
           organizations.map(async (item) => ({
             organization: item,
@@ -59,7 +80,6 @@ export default function App() {
           members.some((member) => member.physician_npi === identity.npi),
         )
         setOrganization(membership?.organization ?? null)
-        setOrganizationMembers(membership?.members ?? [])
       } catch (loadError) {
         setError(displayError(loadError))
       } finally {
@@ -71,15 +91,29 @@ export default function App() {
 
   const openNetworkPost = (postId: string) => {
     setFocusedPostId(postId)
-    setNav('network')
+    setNav('home')
   }
 
+  const toggleConnection = useCallback((physicianId: string) => {
+    if (!identity) return
+    setConnectedIds((current) => {
+      const updated = current.includes(physicianId)
+        ? current.filter((id) => id !== physicianId)
+        : [...current, physicianId]
+      saveDemoConnections(identity.npi, updated)
+      return updated
+    })
+  }, [identity])
+
   const handleSignOut = () => {
-    setNav('patients')
+    setNav('home')
     setFocusedPostId(null)
     setPhysician(null)
     setOrganization(null)
-    setOrganizationMembers([])
+    setConnectedIds([])
+    setAskConfiguration(DEFAULT_ASK_CONFIGURATION)
+    setPostComposerOpen(false)
+    setPatientPostContext(null)
     signOut()
   }
 
@@ -90,8 +124,9 @@ export default function App() {
         loading={loading}
         error={error}
         onContinue={(npi) => {
-          setNav('patients')
+          setNav('home')
           setFocusedPostId(null)
+          setPatientPostContext(null)
           signIn(npi)
         }}
       />
@@ -104,7 +139,13 @@ export default function App() {
         active={nav}
         physician={physician}
         organizationName={organization?.name ?? null}
-        onNavigate={setNav}
+        onNavigate={(key) => {
+          setFocusedPostId(null)
+          setAskConfiguration(DEFAULT_ASK_CONFIGURATION)
+          if (key !== 'patients') setPatientPostContext(null)
+          setNav(key)
+        }}
+        onPost={() => setPostComposerOpen(true)}
         onSignOut={handleSignOut}
       />
       <div className="workspace-shell">
@@ -127,34 +168,75 @@ export default function App() {
             physician={physician}
             organizationName={organization?.name ?? null}
             onOpenNetwork={openNetworkPost}
+            onAskChange={setAskConfiguration}
+            onPatientContextChange={setPatientPostContext}
           />
         )}
-        {!loading && physician && !error && nav === 'network' && (
+        {!loading && physician && !error && nav === 'home' && (
           <NetworkPage
             focusedPostId={focusedPostId}
             physician={physician}
+            connectedIds={connectedIds}
+            onToggleConnection={toggleConnection}
+            onAskChange={setAskConfiguration}
           />
         )}
-        {!loading && physician && !error && nav === 'reviews' && (
+        {!loading && physician && !error && nav === 'publication' && (
           <ReviewInboxPage
             focusedPostId={focusedPostId}
             physician={physician}
             onApproved={openNetworkPost}
+            onAskChange={setAskConfiguration}
+          />
+        )}
+        {!loading && physician && !error && nav === 'setup' && (
+          <AgentSetupPage
+            physician={physician}
+            onAgentUpdated={setPhysician}
+            onAskChange={setAskConfiguration}
+          />
+        )}
+        {!loading && physician && !error && nav === 'connections' && (
+          <ConnectionsPage
+            connectedIds={connectedIds}
+            onToggleConnection={toggleConnection}
+            onAskChange={setAskConfiguration}
+          />
+        )}
+        {!loading && physician && !error && nav === 'physicians' && (
+          <PhysiciansPage
+            connectedIds={connectedIds}
+            onToggleConnection={toggleConnection}
+            onAskChange={setAskConfiguration}
           />
         )}
         {!loading && physician && !error && nav === 'profile' && (
-          <ProfilePage physician={physician} organization={organization} />
+          <ProfilePage
+            physician={physician}
+            organization={organization}
+            onAskChange={setAskConfiguration}
+          />
         )}
       </main>
       {!loading && physician && !error && (
         <RightRail
-          active={nav}
           physician={physician}
-          organization={organization}
-          members={organizationMembers}
+          configuration={askConfiguration}
         />
       )}
       </div>
+      {postComposerOpen && physician && (
+        <PostComposerModal
+          physician={physician}
+          patientContext={patientPostContext}
+          onClose={() => setPostComposerOpen(false)}
+          onPublished={(post) => {
+            setPostComposerOpen(false)
+            setPatientPostContext(null)
+            openNetworkPost(post.id)
+          }}
+        />
+      )}
     </div>
   )
 }

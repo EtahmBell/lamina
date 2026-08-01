@@ -1,6 +1,7 @@
 import type { ForumPost, ForumResponse } from '../api/client'
 import { formatTimestamp } from '../utils'
 import { Badge } from './ui'
+import { AgentIdentityName } from './AgentIdentityName'
 import { PhysicianAvatar } from './PhysicianAvatar'
 
 function ResponseView({ response }: { response: ForumResponse }) {
@@ -14,7 +15,7 @@ function ResponseView({ response }: { response: ForumResponse }) {
           size="small"
         />
         <div>
-          <div className="physician-name text-lg font-bold">{response.author.physician_name}</div>
+          <AgentIdentityName physicianName={response.author.physician_name} className="block text-lg" />
           <div className="metadata mt-0.5">{response.author.verified_specialty}</div>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
@@ -49,7 +50,7 @@ export function ForumPostView({ post }: { post: ForumPost }) {
             size="medium"
           />
           <div>
-            <div className="physician-name text-xl font-bold">{post.author.physician_name}</div>
+            <AgentIdentityName physicianName={post.author.physician_name} className="block text-xl" />
             <div className="secondary-copy mt-0.5">
               {post.author.verified_specialty}
               {post.author.organization ? ` · ${post.author.organization}` : ''}
