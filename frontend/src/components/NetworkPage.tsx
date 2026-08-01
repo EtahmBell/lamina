@@ -10,6 +10,7 @@ import {
 } from '../demo/showcaseFeed'
 import { displayError, formatTimestamp } from '../utils'
 import { AgentIdentityName } from './AgentIdentityName'
+import { Icon } from './Icon'
 import { ForumPostView } from './ForumPostView'
 import { PhysicianAvatar } from './PhysicianAvatar'
 import type { AskLaminaConfiguration } from './RightRail'
@@ -146,27 +147,32 @@ export function NetworkPage({
         </section>
       ) : (
         <section>
-          <div className="feed-toolbar">
-            <div className="feed-filters" aria-label="Feed filters">
-              {(['all', 'discussion', 'report'] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={filter === value}
-                  onClick={() => setFilter(value)}
-                >
-                  {value === 'all' ? 'All' : `${value[0].toUpperCase()}${value.slice(1)}s`}
-                </button>
-              ))}
-            </div>
+          <div className="feed-searchbar">
+            <Icon name="search" />
             <input
               value={feedSearch}
               onChange={(event) => setFeedSearch(event.target.value)}
-              placeholder="Filter the feed"
+              placeholder="Search threads — physicians, topics, agents…"
               aria-label="Filter the Home feed"
-              className="input-control feed-search"
             />
-            <button type="button" onClick={() => void loadFeed()} className="text-action">Refresh</button>
+          </div>
+          <div className="feed-headrow">
+            <h1>Home</h1>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => void loadFeed()} className="text-action">Refresh</button>
+              <div className="feed-pills" aria-label="Feed filters">
+                {(['all', 'discussion', 'report'] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={filter === value}
+                    onClick={() => setFilter(value)}
+                  >
+                    {value === 'all' ? 'All' : `${value[0].toUpperCase()}${value.slice(1)}s`}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="mt-5 space-y-4">
@@ -193,6 +199,7 @@ export function NetworkPage({
 }
 
 function RealPostCard({ post, onOpen }: { post: ForumPost; onOpen: () => void }) {
+  const [liked, setLiked] = useState(false)
   return (
     <article className="feed-card real-feed-card">
       <div className="flex items-center gap-3">
@@ -210,9 +217,31 @@ function RealPostCard({ post, onOpen }: { post: ForumPost; onOpen: () => void })
         <h2 className="publication-title text-[1.35rem]">{post.title}</h2>
         <p className="body-copy mt-2 line-clamp-3 text-[0.98rem] text-[var(--text-secondary)]">{post.clinical_question}</p>
       </button>
+      {post.specialty_tags.length > 0 && (
+        <div className="post-tags">
+          {post.specialty_tags.map((tag) => (
+            <span key={tag} className="post-tag">#{tag.replace(/\s+/g, '')}</span>
+          ))}
+        </div>
+      )}
       <footer className="social-footer">
-        <span>{post.published_response_count} response{post.published_response_count === 1 ? '' : 's'}</span>
-        <span className="ml-auto">Live Lamina discussion</span>
+        <button
+          type="button"
+          onClick={() => setLiked((value) => !value)}
+          className={`social-action${liked ? ' liked' : ''}`}
+          aria-pressed={liked}
+        >
+          <Icon name={liked ? 'heart-filled' : 'heart'} />
+          {liked ? 1 : 0}
+        </button>
+        <button type="button" onClick={onOpen} className="social-action">
+          <Icon name="message" />
+          {post.published_response_count}
+        </button>
+        <span className="social-action ml-auto">
+          <Icon name="share" />
+          Share
+        </span>
       </footer>
     </article>
   )
@@ -230,6 +259,7 @@ function ShowcasePostCard({
   onOpenPhysician: (physician: ShowcasePhysician) => void
 }) {
   const author = showcasePhysician(post.physicianId)
+  const [liked, setLiked] = useState(false)
   return (
     <article className="feed-card showcase-feed-card">
       <div className="flex items-center gap-3">
@@ -256,11 +286,33 @@ function ShowcasePostCard({
       </div>
       <h2 className="publication-title mt-3 text-[1.35rem]">{post.title}</h2>
       <p className="body-copy mt-2 text-[0.98rem] text-[var(--text-secondary)]">{post.excerpt}</p>
-      <div className="mt-4 flex flex-wrap gap-2">{post.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>
+      <div className="post-tags">
+        {post.tags.map((tag) => (
+          <span key={tag} className="post-tag">#{tag.replace(/\s+/g, '')}</span>
+        ))}
+      </div>
       <footer className="social-footer">
-        <span>{post.likes} likes</span>
-        <span>{post.responses} responses</span>
-        <span>{post.views} views</span>
+        <button
+          type="button"
+          onClick={() => setLiked((value) => !value)}
+          className={`social-action${liked ? ' liked' : ''}`}
+          aria-pressed={liked}
+        >
+          <Icon name={liked ? 'heart-filled' : 'heart'} />
+          {post.likes + (liked ? 1 : 0)}
+        </button>
+        <span className="social-action">
+          <Icon name="message" />
+          {post.responses}
+        </span>
+        <span className="social-action">
+          <Icon name="chart" />
+          {post.views}
+        </span>
+        <span className="social-action ml-auto">
+          <Icon name="share" />
+          Share
+        </span>
       </footer>
     </article>
   )
