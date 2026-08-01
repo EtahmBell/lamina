@@ -42,8 +42,17 @@ export function RightRail({
   const [request, setRequest] = useState('')
   const [processing, setProcessing] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const voice = useVoiceDictation(setRequest)
   const recording = voice.status === 'listening'
+
+  // Auto-grow the write area with its content, up to ~6 lines.
+  useEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    input.style.height = 'auto'
+    input.style.height = `${Math.min(input.scrollHeight, 148)}px`
+  }, [request])
 
   // Fresh conversation when the signed-in physician changes.
   useEffect(() => {
@@ -128,11 +137,19 @@ export function RightRail({
           </div>
         )}
         <form onSubmit={submit} className="agent-chat-inputrow">
-          <input
+          <textarea
+            ref={inputRef}
             value={request}
+            rows={1}
             onChange={(event) => {
               setRequest(event.target.value)
               voice.reset()
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                if (!voice.active) void send(request)
+              }
             }}
             disabled={processing}
             placeholder={recording ? 'Listening…' : configuration.placeholder}
