@@ -1707,3 +1707,252 @@ button.social-action:hover {
   color: var(--text-secondary);
   font-size: 0.76rem;
 }
+
+/* ---------- my patients redesign ---------- */
+
+.patient-card,
+.clinical-context-card {
+  border: none;
+  border-radius: 18px;
+  box-shadow: 0 4px 18px rgb(36 52 71 / 8%);
+}
+
+.patient-card {
+  border-top: none;
+  align-items: center;
+  padding: 20px 22px;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.patient-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px rgb(36 52 71 / 12%);
+}
+
+.patient-monogram {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #ecdfd0, #e2d2bf);
+  color: var(--accent-hover);
+  font-size: 1rem;
+}
+
+.patient-monogram.large {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  font-size: 1.3rem;
+}
+
+.patient-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.patient-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.patient-summary {
+  margin-top: 8px;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.patient-open-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.patient-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 22px 24px;
+  box-shadow: 0 4px 18px rgb(36 52 71 / 8%);
+}
+
+.clinical-context-card {
+  border-top: none;
+  padding: 18px 20px;
+}
+
+.clinical-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.clinical-card-head h3 {
+  font-family: var(--font-display);
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
+.clinical-card-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #f4ecdf;
+  color: var(--accent-hover);
+}
+
+.clinical-card-count {
+  margin-left: auto;
+  border-radius: 999px;
+  background: rgb(226 232 240 / 0%);
+  background: #f3e7db;
+  color: var(--accent-hover);
+  padding: 2px 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.clinical-item-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.clinical-item-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 2px;
+}
+
+.clinical-item-list li + li {
+  border-top: 1px solid rgb(216 210 199 / 45%);
+}
+
+.clinical-item-primary {
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.clinical-item-secondary {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  text-transform: lowercase;
+}
+
+/* ---------- claim agent flow ---------- */
+
+.claim-flow {
+  margin-top: 24px;
+}
+
+.claim-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.claim-search-row .feed-searchbar {
+  min-width: 240px;
+}
+
+.claim-state-input {
+  width: 76px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 13px 16px;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+}
+
+.claim-state-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(184 92 50 / 11%);
+}
+
+.claim-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 18px 20px;
+  box-shadow: 0 4px 18px rgb(36 52 71 / 8%);
+}
+
+.claim-selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  border-radius: 14px;
+  background: #f8f3eb;
+  padding: 14px 18px;
+}
+
+.claim-code-input {
+  max-width: 180px;
+  letter-spacing: 0.35em;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.claim-success {
+  text-align: center;
+}
+
+.claim-success-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: #e9f2ec;
+  color: var(--success);
+}
+
+.claim-success .button-primary {
+  display: block;
+}
+
+.claim-entry-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgb(184 92 50 / 35%);
+  border-radius: 12px;
+  background: #faf3ec;
+  color: var(--accent-hover);
+  padding: 13px 16px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.claim-entry-button:hover {
+  border-color: var(--accent);
+  background: #f6e9dd;
+}

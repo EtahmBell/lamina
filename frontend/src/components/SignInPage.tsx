@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import type { AgentDetails } from '../api/client'
 import { Brand } from './Brand'
+import { ClaimAgentFlow } from './ClaimAgentFlow'
+import { Icon } from './Icon'
 import { PhysicianAvatar } from './PhysicianAvatar'
 import { Badge, ErrorBanner, PageLoading } from './ui'
 
@@ -14,6 +17,19 @@ export function SignInPage({
   error: string | null
   onContinue: (npi: string) => void
 }) {
+  const [claiming, setClaiming] = useState(false)
+
+  if (claiming) {
+    return (
+      <main className="demo-sign-in">
+        <section className="demo-sign-in-panel">
+          <Brand large />
+          <ClaimAgentFlow onBack={() => setClaiming(false)} />
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="demo-sign-in">
       <section className="demo-sign-in-panel">
@@ -63,6 +79,21 @@ export function SignInPage({
             ))}
           </div>
         )}
+
+        <div className="section-rule mt-7 pt-6">
+          <button
+            type="button"
+            onClick={() => setClaiming(true)}
+            className="claim-entry-button"
+          >
+            <Icon name="sparkle" className="h-4 w-4" />
+            Claim your physician agent
+            <Icon name="arrow-right" className="ml-auto h-4 w-4 opacity-70" />
+          </button>
+          <p className="metadata mt-2">
+            Are you a physician? Find your directory profile and activate your reserved agent.
+          </p>
+        </div>
 
         <p className="metadata mt-7">Synthetic hackathon environment</p>
       </section>

@@ -22,6 +22,7 @@ import {
 } from '../askLamina'
 import { displayError } from '../utils'
 import { ForumPostView } from './ForumPostView'
+import { Icon, type IconName } from './Icon'
 import type { AskLaminaConfiguration } from './RightRail'
 import type { PatientPostContext } from './PostComposerModal'
 import { Badge, EmptyState, ErrorBanner, PageLoading, PrimaryButton } from './ui'
@@ -33,14 +34,31 @@ const postStorageKey = (physicianNpi: string, patientRef: string) =>
 
 type PendingAction = 'patients' | 'case' | 'generating' | 'publishing' | 'monitoring' | null
 
-function ClinicalList({ title, items }: { title: string; items: string[] }) {
+function ClinicalList({
+  title,
+  icon,
+  items,
+}: {
+  title: string
+  icon: IconName
+  items: Array<{ primary: string; secondary?: string }>
+}) {
   return (
     <section className="clinical-context-card">
-      <h3 className="eyebrow text-[var(--clinical)]">{title}</h3>
+      <div className="clinical-card-head">
+        <span className="clinical-card-icon">
+          <Icon name={icon} className="h-4 w-4" />
+        </span>
+        <h3>{title}</h3>
+        <span className="clinical-card-count">{items.length}</span>
+      </div>
       {items.length ? (
-        <ul className="mt-3 divide-y divide-[var(--border)] text-sm leading-relaxed text-[var(--text-primary)]">
+        <ul className="clinical-item-list">
           {items.map((item) => (
-            <li key={item} className="py-2.5">{item}</li>
+            <li key={`${item.primary}-${item.secondary ?? ''}`}>
+              <span className="clinical-item-primary">{item.primary}</span>
+              {item.secondary && <span className="clinical-item-secondary">{item.secondary}</span>}
+            </li>
           ))}
         </ul>
       ) : (
@@ -253,64 +271,60 @@ export function PatientsPage({
   if (!selectedRef) {
     return (
       <div className="page-shell">
-        <header className="page-hero patient-page-hero">
-          <div>
-            <div className="eyebrow">Physician workspace</div>
-            <h1 className="page-title mt-1">My Patients</h1>
-            <p className="secondary-copy mt-2">
-              Authorized synthetic cases for {physician.physician.display_name}
-              {organizationName ? ` · ${organizationName}` : ''}
-            </p>
-          </div>
-          <Badge tone="clinical">Medplum synchronized</Badge>
-        </header>
+        <div className="feed-searchbar">
+          <Icon name="search" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search your patient panel…"
+            aria-label="Search patients returned by Medplum"
+          />
+        </div>
 
-        <div className="mt-7 flex flex-wrap items-end gap-4">
+        <div className="feed-headrow">
           <div>
-            <h2 className="section-title">Authorized patient panel</h2>
+            <h1>My Patients</h1>
             <p className="secondary-copy mt-1">
-              Your authorized synthetic Medplum panel. No raw FHIR resources are shown.
+              Authorized synthetic Medplum panel for {physician.physician.display_name}
+              {organizationName ? ` · ${organizationName}` : ''}. No raw FHIR resources are shown.
             </p>
           </div>
-          <Badge tone="success">Synthetic demo data</Badge>
-          <button
-            type="button"
-            onClick={() => void loadPatients()}
-            className="text-action ml-auto"
-          >
-            Refresh
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            <button type="button" onClick={() => void loadPatients()} className="text-action">
+              Refresh
+            </button>
+            <Badge tone="clinical">Medplum synchronized</Badge>
+          </div>
         </div>
 
         {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
 
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search patients returned by Medplum"
-          className="input-control mt-5"
-        />
-
-        <div className="mt-5 grid gap-4">
+        <div className="mt-6 grid gap-4">
           {visiblePatients.map((patient) => (
             <article key={patient.patient_ref} className="patient-card">
-              <div className="patient-monogram">SP</div>
+              <div className="patient-monogram">
+                {patient.display_name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}
+              </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="physician-name text-xl font-bold">{patient.display_name}</h3>
                   {patient.synthetic && <Badge tone="success">Synthetic</Badge>}
                 </div>
-                <div className="metadata mt-1">Age band {patient.age_band} · Medplum case</div>
+                <div className="patient-meta">
+                  <span><Icon name="user" className="h-3.5 w-3.5" /> Age {patient.age_band}</span>
+                  <span><Icon name="chart" className="h-3.5 w-3.5" /> Medplum case</span>
+                </div>
                 {patient.summary && (
-                  <p className="secondary-copy mt-1 text-[var(--text-primary)]">{patient.summary}</p>
+                  <p className="patient-summary">{patient.summary}</p>
                 )}
               </div>
               <button
                 type="button"
                 onClick={() => selectPatient(patient.patient_ref)}
-                className="button-secondary patient-open-button"
+                className="button-primary patient-open-button"
               >
                 Open patient
+                <Icon name="arrow-right" className="h-4 w-4" />
               </button>
             </article>
           ))}
@@ -339,8 +353,9 @@ export function PatientsPage({
           setPost(null)
           setError(null)
         }}
-        className="text-action"
+        className="text-action inline-flex items-center gap-1.5"
       >
+        <Icon name="arrow-left" className="h-4 w-4" />
         Back to My Patients
       </button>
 
@@ -356,13 +371,26 @@ export function PatientsPage({
         </div>
       ) : (
         <>
-          <header className="page-hero mt-5">
-            <div>
+          <header className="patient-hero mt-5">
+            <div className="patient-monogram large">
+              {caseContext.display_name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}
+            </div>
+            <div className="min-w-0 flex-1">
               <div className="eyebrow">Patient chart summary</div>
               <h1 className="page-title mt-1">{caseContext.display_name}</h1>
-              <p className="secondary-copy mt-2">Age {caseContext.age_band}</p>
+              <div className="patient-meta mt-2">
+                <span><Icon name="user" className="h-3.5 w-3.5" /> Age {caseContext.age_band}</span>
+                <span>
+                  <Icon name="stethoscope" className="h-3.5 w-3.5" />
+                  {caseContext.conditions.length} condition{caseContext.conditions.length === 1 ? '' : 's'}
+                </span>
+                <span>
+                  <Icon name="pharmacology" className="h-3.5 w-3.5" />
+                  {caseContext.medications.length} medication{caseContext.medications.length === 1 ? '' : 's'}
+                </span>
+              </div>
             </div>
-            <div className="ml-auto flex flex-wrap gap-2">
+            <div className="flex shrink-0 flex-wrap gap-2">
               <Badge tone="success">Synthetic demo data</Badge>
               <Badge tone="clinical">Medplum synchronized</Badge>
             </div>
@@ -371,21 +399,27 @@ export function PatientsPage({
           <div className="mt-6 grid gap-4 lg:grid-cols-3">
             <ClinicalList
               title="Conditions"
-              items={caseContext.conditions.map(
-                (item) => `${item.display} · ${item.clinical_status}`,
-              )}
+              icon="stethoscope"
+              items={caseContext.conditions.map((item) => ({
+                primary: item.display,
+                secondary: item.clinical_status,
+              }))}
             />
             <ClinicalList
-              title="Medication context"
-              items={caseContext.medications.map(
-                (item) => `${item.display} · ${item.timing_summary || item.status}`,
-              )}
+              title="Medications"
+              icon="pharmacology"
+              items={caseContext.medications.map((item) => ({
+                primary: item.display,
+                secondary: item.timing_summary || item.status,
+              }))}
             />
             <ClinicalList
-              title="Observations and outcomes"
-              items={caseContext.observations.map((item) =>
-                [item.display, item.value_summary, item.effective_date].filter(Boolean).join(' · '),
-              )}
+              title="Observations & outcomes"
+              icon="chart"
+              items={caseContext.observations.map((item) => ({
+                primary: item.display,
+                secondary: [item.value_summary, item.effective_date].filter(Boolean).join(' · '),
+              }))}
             />
           </div>
 
