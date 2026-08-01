@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { AgentDetails } from '../api/client'
+import { useVoiceDictation } from '../hooks/useVoiceDictation'
 import { displayError } from '../utils'
 import { Icon } from './Icon'
 
@@ -19,26 +20,6 @@ type ChatMessage = {
 }
 
 let messageId = 0
-
-type SpeechRecognitionLike = {
-  lang: string
-  interimResults: boolean
-  continuous: boolean
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-  onend: (() => void) | null
-  onerror: ((event: { error: string }) => void) | null
-  start: () => void
-  stop: () => void
-}
-
-function getSpeechRecognition(): SpeechRecognitionLike | null {
-  const w = window as unknown as {
-    SpeechRecognition?: new () => SpeechRecognitionLike
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike
-  }
-  const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition
-  return Ctor ? new Ctor() : null
-}
 
 function timeGreeting(): string {
   const hour = new Date().getHours()
@@ -60,10 +41,9 @@ export function RightRail({
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [request, setRequest] = useState('')
   const [processing, setProcessing] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const [voiceNote, setVoiceNote] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const voice = useVoiceDictation(setRequest)
+  const recording = voice.status === 'listening'
 
   // Fresh conversation when the signed-in physician changes.
   useEffect(() => {
@@ -97,48 +77,9 @@ export function RightRail({
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
+    if (voice.active) return
     void send(request)
   }
-
-  const toggleVoice = () => {
-    if (recording) {
-      recognitionRef.current?.stop()
-      return
-    }
-    const recognition = getSpeechRecognition()
-    if (!recognition) {
-      setVoiceNote('Voice input is not supported in this browser — try Chrome or Edge.')
-      return
-    }
-    recognition.lang = 'en-US'
-    recognition.interimResults = false
-    recognition.continuous = false
-    recognition.onresult = (event) => {
-      const transcript = Array.from({ length: event.results.length })
-        .map((_, i) => event.results[i][0].transcript)
-        .join(' ')
-        .trim()
-      if (!transcript) return
-      setRequest((current) => (current ? `${current.trim()} ${transcript}` : transcript))
-      setVoiceNote(null)
-    }
-    recognition.onerror = (event) => {
-      setVoiceNote(
-        event.error === 'not-allowed'
-          ? 'Microphone access was denied.'
-          : `Voice input error: ${event.error}`,
-      )
-      setRecording(false)
-    }
-    recognition.onend = () => setRecording(false)
-    recognitionRef.current = recognition
-    setVoiceNote('Listening… speak your request.')
-    setRecording(true)
-    recognition.start()
-  }
-
-  // Stop listening if the panel unmounts mid-recording.
-  useEffect(() => () => recognitionRef.current?.stop(), [])
 
   return (
     <aside className="right-rail ask-right-rail agent-chat" aria-label="Your agent">
@@ -189,7 +130,10 @@ export function RightRail({
         <form onSubmit={submit} className="agent-chat-inputrow">
           <input
             value={request}
-            onChange={(event) => setRequest(event.target.value)}
+            onChange={(event) => {
+              setRequest(event.target.value)
+              voice.reset()
+            }}
             disabled={processing}
             placeholder={recording ? 'Listening…' : configuration.placeholder}
             aria-label="Ask your agent"
@@ -197,25 +141,26 @@ export function RightRail({
           />
           <button
             type="button"
-            onClick={toggleVoice}
-            aria-label={recording ? 'Stop voice input' : 'Start voice input'}
-            aria-pressed={recording}
-            title={recording ? 'Stop listening' : 'Dictate your request'}
+            onClick={() => voice.toggle(request)}
+            disabled={processing}
+            aria-label={voice.active ? 'Stop voice input' : 'Start voice input'}
+            aria-pressed={voice.active}
+            title={voice.active ? 'Stop listening' : 'Dictate your request'}
             className={`agent-chat-mic${recording ? ' recording' : ''}`}
           >
             <Icon name="mic" className="h-4 w-4" />
           </button>
           <button
             type="submit"
-            disabled={!request.trim() || processing}
+            disabled={!request.trim() || processing || voice.active}
             aria-label="Send"
             className="agent-chat-send"
           >
             <Icon name="arrow-up" className="h-4 w-4" />
           </button>
         </form>
-        {voiceNote && (
-          <p className="agent-chat-voicenote" role="status">{voiceNote}</p>
+        {voice.message && (
+          <p className="agent-chat-voicenote" role="status">{voice.message}</p>
         )}
         <p className="agent-chat-safety">
           Lamina routes supported actions through physician-network workflows. It does not provide
