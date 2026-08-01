@@ -9,11 +9,33 @@ if (import.meta.env.PROD && !configuredApiBaseUrl.startsWith('https://')) {
 
 export const API_BASE_URL = configuredApiBaseUrl.replace(/\/$/, '')
 
-export const DEMO = {
-  organizationId: 'org-lamina-demo-medical-group',
-  ethan: { npi: '9000000999', agentId: 'agent-9000000999' },
-  lianne: { npi: '9000001000', agentId: 'agent-9000001000' },
-} as const
+export interface AgentDetails {
+  id: string
+  physician_npi: string
+  status: string
+  physician: {
+    npi: string
+    display_name: string
+    primary_specialty: string
+    primary_taxonomy_code: string
+    data_source: string
+    profile_status: string
+  }
+  claim: { status: string; verified_at: string | null } | null
+  configuration: {
+    verified_specialties: string[]
+    declared_expertise_tags: string[]
+    monitoring_topics: string[]
+    publication_mode: string
+  } | null
+  effective_permissions: {
+    can_draft_voice_posts: boolean
+    can_draft_responses: boolean
+    can_generate_reports: boolean
+    can_publish_clinical_content: boolean
+    requires_physician_approval: boolean
+  }
+}
 
 export interface OrganizationSummary {
   id: string
@@ -45,12 +67,12 @@ export interface MedplumIntegration {
   last_error_category: string | null
 }
 
-export interface MedplumHealth {
-  configured: boolean
-  authenticated: boolean
-  fhir_reachable: boolean
-  project_id_configured: boolean
-  status: string
+export interface PatientSummary {
+  patient_ref: string
+  display_name: string
+  synthetic: boolean
+  age_band: string
+  summary: string
 }
 
 export interface ConditionContext {
@@ -70,8 +92,9 @@ export interface ObservationContext {
   effective_date: string
 }
 
-export interface CaseContext {
-  patient_id: string
+export interface PatientCaseContext {
+  patient_ref: string
+  display_name: string
   synthetic: boolean
   age_band: string
   conditions: ConditionContext[]
@@ -134,6 +157,7 @@ export interface ForumPost {
     prompt_version: string | null
     model: string | null
     generated_at: string | null
+    grounding?: GroundingProvenance
   }
   created_at: string
   updated_at: string
@@ -176,14 +200,20 @@ export interface GroundingReview {
     similarities: string[]
     differences: string[]
     unknowns: string[]
-    execution_trace: string[]
   }
 }
 
-export interface ExportResult {
-  post_id: string
-  status: string
-  exported_at: string
+export interface PhysicianDirectoryResult {
+  npi: string
+  display_name: string
+  primary_specialty: string
+  city: string
+  state: string
+  source: string
+  profile_status: string
+  agent_id: string
+  agent_status: string
+  claimed: number
 }
 
 export class ApiError extends Error {
@@ -227,6 +257,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T
 }
 
+export function getAgent(agentId: string): Promise<AgentDetails> {
+  return request(`/agents/${encodeURIComponent(agentId)}`)
+}
+
 export async function getOrganizations(): Promise<OrganizationSummary[]> {
   const result = await request<{ organizations: OrganizationSummary[] }>('/organizations')
   return result.organizations
@@ -245,50 +279,55 @@ export function getMedplumIntegration(organizationId: string): Promise<MedplumIn
   return request(`/organizations/${encodeURIComponent(organizationId)}/integrations/medplum`)
 }
 
-export function testMedplumIntegration(organizationId: string): Promise<MedplumHealth> {
-  return request(`/organizations/${encodeURIComponent(organizationId)}/integrations/medplum/test`, {
-    method: 'POST',
-  })
-}
-
-export async function getAgentCases(agentId: string): Promise<CaseContext[]> {
-  const result = await request<{ cases: CaseContext[] }>(
-    `/agents/${encodeURIComponent(agentId)}/medplum/cases`,
+export async function getMyPatients(physicianNpi: string): Promise<PatientSummary[]> {
+  const result = await request<{ patients: PatientSummary[] }>(
+    `/physicians/${encodeURIComponent(physicianNpi)}/patients`,
   )
-  return result.cases
+  return result.patients
 }
 
-export function generateForumPost(
-  patientId: string,
+export function getPatientCaseContext(
+  physicianNpi: string,
+  patientRef: string,
+): Promise<PatientCaseContext> {
+  return request(
+    `/physicians/${encodeURIComponent(physicianNpi)}/patients/${encodeURIComponent(patientRef)}/case-context`,
+  )
+}
+
+export function generatePatientForumPost(
+  physicianNpi: string,
+  patientRef: string,
   physicianGuidance: string,
 ): Promise<ForumPost> {
-  return request(`/medplum/patients/${encodeURIComponent(patientId)}/forum-posts/generate`, {
-    method: 'POST',
-    body: JSON.stringify({
-      agent_id: DEMO.ethan.agentId,
-      physician_guidance: physicianGuidance,
-    }),
-  })
+  return request(
+    `/physicians/${encodeURIComponent(physicianNpi)}/patients/${encodeURIComponent(patientRef)}/forum-posts/generate`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ physician_guidance: physicianGuidance }),
+    },
+  )
 }
 
-export function approveForumPost(postId: string): Promise<ForumPost> {
+export function approveForumPost(
+  postId: string,
+  physicianNpi: string,
+): Promise<ForumPost> {
   return request(`/forum/posts/${encodeURIComponent(postId)}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ physician_npi: DEMO.ethan.npi }),
+    body: JSON.stringify({ physician_npi: physicianNpi }),
   })
 }
 
-export function getForumPost(postId: string): Promise<ForumPost> {
-  const params = new URLSearchParams({ viewer_physician_npi: DEMO.ethan.npi })
-  return request(`/forum/posts/${encodeURIComponent(postId)}?${params}`)
+export function getForumPost(postId: string, viewerPhysicianNpi?: string): Promise<ForumPost> {
+  const query = viewerPhysicianNpi
+    ? `?${new URLSearchParams({ viewer_physician_npi: viewerPhysicianNpi })}`
+    : ''
+  return request(`/forum/posts/${encodeURIComponent(postId)}${query}`)
 }
 
 export async function getForumFeed(): Promise<ForumPost[]> {
-  const params = new URLSearchParams({
-    status: 'published',
-    author_physician_npi: DEMO.ethan.npi,
-    limit: '20',
-  })
+  const params = new URLSearchParams({ status: 'published', limit: '100' })
   const result = await request<{ posts: ForumPost[] }>(`/forum/posts?${params}`)
   return result.posts
 }
@@ -301,38 +340,36 @@ export function getReviewInbox(physicianNpi: string): Promise<ReviewInbox> {
   return request(`/physicians/${encodeURIComponent(physicianNpi)}/review-inbox`)
 }
 
-export function getGroundingReview(responseId: string): Promise<GroundingReview> {
-  const params = new URLSearchParams({ physician_npi: DEMO.lianne.npi })
+export function getGroundingReview(
+  responseId: string,
+  physicianNpi: string,
+): Promise<GroundingReview> {
+  const params = new URLSearchParams({ physician_npi: physicianNpi })
   return request(`/forum/responses/${encodeURIComponent(responseId)}/grounding-review?${params}`)
 }
 
-export function approveForumResponse(responseId: string): Promise<ForumResponse> {
+export function approveForumResponse(
+  responseId: string,
+  physicianNpi: string,
+): Promise<ForumResponse> {
   return request(`/forum/responses/${encodeURIComponent(responseId)}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ physician_npi: DEMO.lianne.npi }),
+    body: JSON.stringify({ physician_npi: physicianNpi }),
   })
 }
 
-export async function getExportStatus(
-  postId: string,
-): Promise<{ linked: boolean; exported: boolean }> {
-  try {
-    const result = await request<{ exported_at: string | null }>(
-      `/forum/posts/${encodeURIComponent(postId)}/medplum-link`,
-    )
-    return { linked: true, exported: Boolean(result.exported_at) }
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) {
-      return { linked: false, exported: false }
-    }
-    throw error
-  }
+export async function searchPhysicians(
+  query: string,
+  state?: string,
+): Promise<PhysicianDirectoryResult[]> {
+  const params = new URLSearchParams({ q: query, limit: '20' })
+  if (state) params.set('state', state)
+  const result = await request<{ results: PhysicianDirectoryResult[] }>(
+    `/physicians/search?${params}`,
+  )
+  return result.results
 }
 
-export async function exportForumPost(postId: string): Promise<ExportResult> {
-  const result = await request<ExportResult & { medplum_patient_id: string; communication_id: string }>(
-    `/forum/posts/${encodeURIComponent(postId)}/export-to-medplum`,
-    { method: 'POST' },
-  )
-  return { post_id: result.post_id, status: result.status, exported_at: result.exported_at }
+export function getPhysicianProfile(npi: string): Promise<PhysicianDirectoryResult> {
+  return request(`/physicians/${encodeURIComponent(npi)}`)
 }

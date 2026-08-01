@@ -274,6 +274,19 @@ class GenerateMedplumPostInput(BaseModel):
         return value.strip()
 
 
+class GeneratePatientPostInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    physician_guidance: str = Field(min_length=1, max_length=5_000)
+
+    @field_validator("physician_guidance")
+    @classmethod
+    def reject_blank_guidance(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("physician_guidance must not be blank")
+        return value.strip()
+
+
 class MonitoringConfidence(StrEnum):
     LOW = "low"
     MEDIUM = "medium"

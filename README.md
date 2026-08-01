@@ -69,10 +69,11 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open `http://localhost:5173`. The initial **Clinical Demo** screen uses the centralized
-`VITE_API_BASE_URL` configuration and real Lamina endpoints for organization status, Ethan's
-synthetic Medplum case, generation, approvals, grounded monitoring, Lianne's review inbox, the
-public response, and Medplum export. Other teammate-provided prototype screens remain local mocks.
+Open `http://localhost:5173`. **My Patients** uses the centralized `VITE_API_BASE_URL`
+configuration and real Lamina endpoints for Ethan's authorized synthetic Medplum panel, bounded
+case context, draft generation, physician approval, grounded monitoring, and Lianne's review
+inbox. **Network** loads published forum content and NPPES search results from the backend. Static
+articles, fake patient/post data, and the generic frontend assistant have been removed.
 
 For the deployed Vercel frontend, set `VITE_API_BASE_URL` to the HTTPS URL of the tunnel forwarding
 to local FastAPI, then redeploy. Never set the deployed value to localhost and never place OpenAI

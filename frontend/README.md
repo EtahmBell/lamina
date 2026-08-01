@@ -13,8 +13,9 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open `http://localhost:5173` and select **Clinical Demo**. The browser calls only Lamina FastAPI.
-OpenAI and Medplum credentials remain server-side.
+Open `http://localhost:5173`. **My Patients** is the default screen and loads Ethan Bell's
+authorized synthetic Medplum panel through Lamina FastAPI. OpenAI and Medplum credentials remain
+server-side.
 
 `VITE_API_BASE_URL` is the single browser API configuration point. Copying `.env.example` creates
 the local `http://127.0.0.1:8001` setting; production builds require an explicit HTTPS value.
@@ -47,6 +48,6 @@ $env:VITE_API_BASE_URL = 'https://your-current-tunnel-host.example'
 npm run build
 ```
 
-There is currently no frontend test script. The Home, Publication Center, Agent Setup, Agent
-Connections, assistant, profile, and signup screens are teammate-provided local prototypes. The
-Clinical Demo screen is the backend-integrated workflow.
+There is currently no frontend test script. The active pages are **My Patients**, **Network**,
+**Review Inbox**, and **Profile**. All domain data and workflow state come from FastAPI; the
+frontend contains no fallback patients, posts, articles, responses, or generic clinical chatbot.

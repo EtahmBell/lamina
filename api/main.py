@@ -4,6 +4,8 @@ import json
 import os
 import sqlite3
 from datetime import UTC, datetime
+from hashlib import sha256
+from hmac import compare_digest
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -19,8 +21,10 @@ from api.models import (
     ForumPostDraftInput,
     ForumResponseDraftInput,
     GenerateMedplumPostInput,
+    GeneratePatientPostInput,
     GeneratePostInput,
     GenerateResponseInput,
+    MedplumCaseContext,
     PhysicianApprovalInput,
     PhysicianRejectionInput,
 )
@@ -190,6 +194,73 @@ def get_agent_row(connection: sqlite3.Connection, agent_id: str) -> sqlite3.Row:
     if row is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return row
+
+
+def get_synthetic_physician_agent(
+    connection: sqlite3.Connection, physician_npi: str
+) -> sqlite3.Row:
+    row = connection.execute(
+        """
+        SELECT a.*, p.source
+        FROM agents a JOIN physicians p ON p.npi=a.physician_npi
+        WHERE p.npi=?
+        """,
+        (physician_npi,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Physician not found")
+    if row["source"].casefold() != "synthetic":
+        raise HTTPException(
+            status_code=403,
+            detail="Patient panels are limited to synthetic demo physicians",
+        )
+    return row
+
+
+def opaque_patient_ref(agent_id: str, patient_id: str) -> str:
+    digest = sha256(f"{agent_id}:{patient_id}".encode()).hexdigest()[:24]
+    return f"case-{digest}"
+
+
+def patient_list_summary(case: MedplumCaseContext) -> str:
+    facts: list[str] = []
+    if case.conditions:
+        facts.append(case.conditions[0].display)
+    medication_context = next(
+        (
+            f"{item.display}: {item.timing_summary}"
+            for item in case.medications
+            if item.timing_summary
+        ),
+        "",
+    )
+    if medication_context:
+        facts.append(medication_context)
+    return " · ".join(facts)
+
+
+async def get_authorized_physician_panel(
+    physician_npi: str, injected_service: MedplumService | None
+) -> tuple[sqlite3.Row, list[MedplumCaseContext]]:
+    with connect() as connection:
+        agent = get_synthetic_physician_agent(connection, physician_npi)
+        resolved = get_medplum_service_for_agent(
+            connection, agent["id"], injected_service
+        )
+        practitioner_id = get_practitioner_id_for_agent(
+            connection, resolved, agent["id"]
+        )
+    cases = await resolved.service.get_authorized_panel_cases(practitioner_id)
+    return agent, cases
+
+
+def resolve_opaque_patient_ref(
+    agent_id: str, patient_ref: str, cases: list[MedplumCaseContext]
+) -> tuple[int, MedplumCaseContext]:
+    for index, case in enumerate(cases):
+        if compare_digest(opaque_patient_ref(agent_id, case.patient_id), patient_ref):
+            return index, case
+    raise HTTPException(status_code=404, detail="Patient not found in authorized panel")
 
 
 def latest_claim(connection: sqlite3.Connection, agent_id: str) -> sqlite3.Row | None:
@@ -455,6 +526,24 @@ def forum_post_payload(
         """,
         (row["id"],),
     ).fetchall()
+    medplum_grounded = connection.execute(
+        "SELECT 1 FROM forum_medplum_links WHERE post_id=?", (row["id"],)
+    ).fetchone()
+    provenance = {
+        "drafted_by_agent": True,
+        "draft_origin": row["draft_origin"],
+        "physician_approved": row["approved_at"] is not None,
+        "approved_at": row["approved_at"],
+        "prompt_version": generation["prompt_version"] if generation else None,
+        "model": generation["model"] if generation else None,
+        "generated_at": generation["generated_at"] if generation else None,
+    }
+    if medplum_grounded:
+        provenance["grounding"] = {
+            "grounding_mode": "medplum_patient_case",
+            "source_system": "medplum",
+            "matched_case_count": 1,
+        }
     return {
         "id": row["id"],
         "title": row["title"],
@@ -464,15 +553,7 @@ def forum_post_payload(
         "case_classification": row["case_classification"],
         "status": row["status"],
         "author": forum_author(connection, row["author_agent_id"]),
-        "provenance": {
-            "drafted_by_agent": True,
-            "draft_origin": row["draft_origin"],
-            "physician_approved": row["approved_at"] is not None,
-            "approved_at": row["approved_at"],
-            "prompt_version": generation["prompt_version"] if generation else None,
-            "model": generation["model"] if generation else None,
-            "generated_at": generation["generated_at"] if generation else None,
-        },
+        "provenance": provenance,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "published_at": row["published_at"],
@@ -1643,6 +1724,55 @@ async def medplum_health(
         raise translate_organization_error(error) from error
 
 
+@app.get("/physicians/{npi}/patients")
+async def get_physician_patients(
+    npi: str,
+    injected_service: Annotated[MedplumService | None, Depends(get_medplum_service)],
+) -> dict[str, object]:
+    try:
+        agent, cases = await get_authorized_physician_panel(npi, injected_service)
+    except MedplumError as error:
+        raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
+    patients = [
+        {
+            "patient_ref": opaque_patient_ref(agent["id"], case.patient_id),
+            "display_name": f"Synthetic Patient {chr(65 + index)}",
+            "synthetic": case.synthetic,
+            "age_band": case.age_band,
+            "summary": patient_list_summary(case),
+        }
+        for index, case in enumerate(cases)
+    ]
+    return {
+        "physician_npi": npi,
+        "source_system": "medplum",
+        "patients": patients,
+        "count": len(patients),
+    }
+
+
+@app.get("/physicians/{npi}/patients/{patient_ref}/case-context")
+async def get_physician_patient_context(
+    npi: str,
+    patient_ref: str,
+    injected_service: Annotated[MedplumService | None, Depends(get_medplum_service)],
+) -> dict[str, object]:
+    try:
+        agent, cases = await get_authorized_physician_panel(npi, injected_service)
+        index, case = resolve_opaque_patient_ref(agent["id"], patient_ref, cases)
+    except MedplumError as error:
+        raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
+    return {
+        "patient_ref": patient_ref,
+        "display_name": f"Synthetic Patient {chr(65 + index)}",
+        **case.model_dump(exclude={"patient_id", "source_resource_refs"}),
+    }
+
+
 @app.get("/medplum/patients/{patient_id}/case-context")
 async def get_medplum_case_context(
     patient_id: str,
@@ -1790,6 +1920,36 @@ async def generate_forum_post_from_medplum(
         payload = forum_post_payload(connection, post)
         payload["medplum_link"] = medplum_link_payload(link)
         return payload
+
+
+@app.post("/physicians/{npi}/patients/{patient_ref}/forum-posts/generate")
+async def generate_physician_patient_forum_post(
+    npi: str,
+    patient_ref: str,
+    request: GeneratePatientPostInput,
+    injected_medplum: Annotated[MedplumService | None, Depends(get_medplum_service)],
+    injected_generation: Annotated[
+        DraftGenerationService | None, Depends(get_generation_service)
+    ],
+) -> dict[str, object]:
+    try:
+        agent, cases = await get_authorized_physician_panel(npi, injected_medplum)
+        _, case = resolve_opaque_patient_ref(agent["id"], patient_ref, cases)
+    except MedplumError as error:
+        raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
+    payload = await generate_forum_post_from_medplum(
+        case.patient_id,
+        GenerateMedplumPostInput(
+            agent_id=agent["id"],
+            physician_guidance=request.physician_guidance,
+        ),
+        injected_medplum,
+        injected_generation,
+    )
+    payload.pop("medplum_link", None)
+    return payload
 
 
 @app.get("/forum/posts/{post_id}/medplum-link")

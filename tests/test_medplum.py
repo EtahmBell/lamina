@@ -660,6 +660,80 @@ def test_synthetic_agent_case_discovery_is_bounded_and_identifier_safe(client):
     assert http.get("/agents/agent-1234567890/medplum/cases").status_code == 403
 
 
+def test_physician_patient_list_and_detail_use_opaque_scoped_references(client):
+    http, _ = client
+
+    class PhysicianScopedMedplum(FakeMedplumService):
+        async def get_authorized_panel_cases(self, practitioner_id):
+            if practitioner_id == "practitioner-ethan":
+                return [self.context]
+            if practitioner_id == "practitioner-lianne":
+                return [self.context.model_copy(update={"patient_id": "lianne-patient-id"})]
+            return []
+
+    override_services(PhysicianScopedMedplum())
+
+    response = http.get(f"/physicians/{DEMO_NPI}/patients")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_system"] == "medplum"
+    assert payload["count"] == 1
+    patient = payload["patients"][0]
+    assert patient["patient_ref"].startswith("case-")
+    assert patient["display_name"] == "Synthetic Patient A"
+    assert patient["age_band"] == "40\N{EN DASH}49"
+    assert "Type 2 diabetes mellitus" in patient["summary"]
+    serialized = json.dumps(payload)
+    assert "patient-secret-id" not in serialized
+    assert "condition-secret-id" not in serialized
+    assert "source_resource_refs" not in serialized
+
+    detail = http.get(
+        f"/physicians/{DEMO_NPI}/patients/{patient['patient_ref']}/case-context"
+    )
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["patient_ref"] == patient["patient_ref"]
+    assert detail_payload["conditions"][0]["display"] == "Type 2 diabetes mellitus"
+    assert "patient_id" not in detail_payload
+    assert "source_resource_refs" not in detail_payload
+
+    cross_panel = http.get(
+        f"/physicians/{LIANNE_NPI}/patients/{patient['patient_ref']}/case-context"
+    )
+    assert cross_panel.status_code == 404
+    assert http.get("/physicians/1234567890/patients").status_code == 403
+
+
+def test_opaque_patient_generation_reuses_grounded_workflow_without_ids(client):
+    http, _ = client
+    activate(http, DEMO_NPI, DEMO_AGENT_ID, voice=True)
+    medplum = FakeMedplumService()
+    generation = FakeGenerationService()
+    override_services(medplum, generation)
+    patient_ref = http.get(f"/physicians/{DEMO_NPI}/patients").json()["patients"][0][
+        "patient_ref"
+    ]
+
+    response = http.post(
+        f"/physicians/{DEMO_NPI}/patients/{patient_ref}/forum-posts/generate",
+        json={"physician_guidance": "Ask for clarifying medication history."},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "awaiting_physician_approval"
+    assert "medplum_link" not in payload
+    assert payload["provenance"]["grounding"] == {
+        "grounding_mode": "medplum_patient_case",
+        "source_system": "medplum",
+        "matched_case_count": 1,
+    }
+    assert "patient-secret-id" not in json.dumps(payload)
+    assert "condition-secret-id" not in json.dumps(payload)
+    assert "patient-secret-id" not in json.dumps(generation.medplum_calls[0][1])
+
+
 def create_generated_post(http):
     response = http.post(
         "/medplum/patients/patient-secret-id/forum-posts/generate",

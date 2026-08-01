@@ -1,131 +1,84 @@
-import { useEffect, useRef, useState } from 'react'
-import { Avatar } from './Avatar'
-import type { User } from '../data/mock'
+import type { AgentDetails } from '../api/client'
 
-export type NavKey =
-  | 'demo'
-  | 'home'
-  | 'publications'
-  | 'agent-setup'
-  | 'connections'
-  | 'dms'
-  | 'workflows'
+export type NavKey = 'patients' | 'network' | 'reviews' | 'profile'
 
-interface NavItem {
-  key: NavKey
-  label: string
-  icon: string
-  soon?: boolean
-}
-
-const navItems: NavItem[] = [
-  { key: 'demo', label: 'Clinical Demo', icon: '✦' },
-  { key: 'home', label: 'Home', icon: '🏠' },
-  { key: 'publications', label: 'Publication Center', icon: '📚' },
-  { key: 'agent-setup', label: 'Agent Setup', icon: '⚙️' },
-  { key: 'connections', label: 'Agent Connections', icon: '🔗' },
-  { key: 'dms', label: 'DMs', icon: '💬', soon: true },
-  { key: 'workflows', label: 'Workflows & Automations', icon: '🤖', soon: true },
+const navItems: Array<{ key: NavKey; label: string; short: string }> = [
+  { key: 'patients', label: 'My Patients', short: 'PT' },
+  { key: 'network', label: 'Network', short: 'NW' },
+  { key: 'reviews', label: 'Review Inbox', short: 'RV' },
+  { key: 'profile', label: 'Profile', short: 'ME' },
 ]
 
-interface SidebarProps {
-  active: NavKey
-  user: User
-  onNavigate: (key: NavKey) => void
-  onPost: () => void
-  onEditProfile: () => void
-  onLogout: () => void
+function initials(name: string): string {
+  return name
+    .replace(/,.*$/, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
 }
 
-export function Sidebar({ active, user, onNavigate, onPost, onEditProfile, onLogout }: SidebarProps) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const close = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [menuOpen])
+export function Sidebar({
+  active,
+  physician,
+  onNavigate,
+}: {
+  active: NavKey
+  physician: AgentDetails | null
+  onNavigate: (key: NavKey) => void
+}) {
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white px-4 py-6">
-      <div className="mb-8 flex items-center gap-2 px-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-lg font-bold text-white">
+    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white px-3 py-5 max-md:w-20">
+      <div className="mb-8 flex items-center gap-3 px-2">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-lg font-bold text-white">
           L
         </div>
-        <span className="text-xl font-bold tracking-tight text-slate-900">Lamina</span>
+        <div className="max-md:hidden">
+          <div className="text-xl font-bold tracking-tight text-slate-900">Lamina</div>
+          <div className="text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
+            Physician network
+          </div>
+        </div>
       </div>
 
       <nav className="flex flex-col gap-1">
         {navItems.map((item) => (
           <button
             key={item.key}
-            onClick={() => !item.soon && onNavigate(item.key)}
-            className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] font-medium transition-colors ${
+            type="button"
+            onClick={() => onNavigate(item.key)}
+            className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${
               active === item.key
                 ? 'bg-indigo-50 text-indigo-700'
-                : item.soon
-                  ? 'cursor-default text-slate-400'
-                  : 'text-slate-700 hover:bg-slate-100'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            <span className="text-lg">{item.icon}</span>
-            <span className="flex-1">{item.label}</span>
-            {item.soon && (
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-500 uppercase">
-                soon
-              </span>
-            )}
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[10px] font-bold shadow-sm ring-1 ring-slate-200">
+              {item.short}
+            </span>
+            <span className="max-md:hidden">{item.label}</span>
           </button>
         ))}
       </nav>
 
-      <button
-        onClick={onPost}
-        className="mt-6 rounded-full bg-indigo-600 py-3 text-[15px] font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
-      >
-        Post
-      </button>
-
-      <div ref={menuRef} className="relative mt-auto">
-        {menuOpen && (
-          <div className="absolute bottom-full left-0 z-30 mb-2 w-full overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
-            <button
-              onClick={() => {
-                setMenuOpen(false)
-                onEditProfile()
-              }}
-              className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              👤 Edit profile
-            </button>
-            <div className="my-1 h-px bg-slate-100" />
-            <button
-              onClick={() => {
-                setMenuOpen(false)
-                onLogout()
-              }}
-              className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm font-medium text-rose-600 hover:bg-rose-50"
-            >
-              🚪 Log out
-            </button>
+      <div className="mt-auto rounded-2xl bg-slate-50 p-3 max-md:bg-transparent max-md:p-1">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
+            {physician ? initials(physician.physician.display_name) : 'EB'}
           </div>
-        )}
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
-          className={`flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left ${
-            menuOpen ? 'bg-slate-100' : 'hover:bg-slate-100'
-          }`}
-        >
-          <Avatar color={user.avatarColor} initials={user.initials} size="sm" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-slate-900">{user.name}</div>
-            <div className="truncate text-xs text-slate-500">{user.role}</div>
+          <div className="min-w-0 max-md:hidden">
+            <div className="truncate text-sm font-semibold text-slate-900">
+              {physician?.physician.display_name ?? 'Loading physician...'}
+            </div>
+            <div className="truncate text-xs text-slate-500">
+              {physician?.physician.primary_specialty ?? 'Demo session'}
+            </div>
           </div>
-          <span className="text-slate-400">⋯</span>
-        </button>
+        </div>
+        <div className="mt-2 text-[10px] leading-relaxed text-slate-400 max-md:hidden">
+          Synthetic demo session. Production authentication is deferred.
+        </div>
       </div>
     </aside>
   )
