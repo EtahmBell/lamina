@@ -46,28 +46,31 @@ export function AskLaminaComposer({
   const finalizeTimerRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
 
-  useEffect(() => () => {
-    mountedRef.current = false
-    sessionRef.current += 1
-    if (finalizeTimerRef.current !== null) window.clearTimeout(finalizeTimerRef.current)
-    const recorder = recorderRef.current
-    recorderRef.current = null
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.ondataavailable = null
-      recorder.onstop = null
-      recorder.stop()
-    }
-    streamRef.current?.getTracks().forEach((track) => track.stop())
-    streamRef.current = null
-    const socket = socketRef.current
-    socketRef.current = null
-    if (socket) {
-      socket.onopen = null
-      socket.onmessage = null
-      socket.onerror = null
-      socket.onclose = null
-      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-        socket.close()
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      sessionRef.current += 1
+      if (finalizeTimerRef.current !== null) window.clearTimeout(finalizeTimerRef.current)
+      const recorder = recorderRef.current
+      recorderRef.current = null
+      if (recorder && recorder.state !== 'inactive') {
+        recorder.ondataavailable = null
+        recorder.onstop = null
+        recorder.stop()
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      const socket = socketRef.current
+      socketRef.current = null
+      if (socket) {
+        socket.onopen = null
+        socket.onmessage = null
+        socket.onerror = null
+        socket.onclose = null
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close()
+        }
       }
     }
   }, [])
@@ -201,6 +204,7 @@ export function AskLaminaComposer({
     socketRef.current = socket
 
     socket.onopen = () => {
+      console.info('[Deepgram] WebSocket open')
       if (stoppingRef.current || session !== sessionRef.current) {
         finishVoice()
         return
@@ -211,7 +215,9 @@ export function AskLaminaComposer({
           ? new MediaRecorder(stream, { mimeType })
           : new MediaRecorder(stream)
         recorderRef.current = recorder
+        console.info('[Deepgram] MediaRecorder mimeType:', recorder.mimeType)
         recorder.ondataavailable = (event) => {
+          console.info('[Deepgram] audio chunk bytes:', event.data.size)
           if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
             socket.send(event.data)
           }
@@ -238,8 +244,9 @@ export function AskLaminaComposer({
       } catch {
         return
       }
+      const transcript = message.channel?.alternatives?.[0]?.transcript?.trim() ?? ''
+      console.info('[Deepgram] message:', message.type ?? 'unknown', 'transcript:', transcript)
       if (message.type === 'Results') {
-        const transcript = message.channel?.alternatives?.[0]?.transcript?.trim() ?? ''
         if (transcript) {
           if (message.is_final) {
             const segmentStart = Number.isFinite(message.start)
@@ -261,13 +268,19 @@ export function AskLaminaComposer({
       }
     }
 
-    socket.onerror = () => {
+    socket.onerror = (event) => {
+      console.error('[Deepgram] WebSocket error', event)
       if (!stoppingRef.current) {
         failVoice('The Deepgram connection failed. Your typed text is still available.')
       }
     }
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
+      console.info('[Deepgram] WebSocket close:', {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+      })
       if (socketRef.current !== socket) return
       socketRef.current = null
       releaseMicrophone()
