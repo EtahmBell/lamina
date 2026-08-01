@@ -192,6 +192,7 @@ export default function App() {
         {!loading && physician && !error && nav === 'setup' && (
           <AgentSetupPage
             physician={physician}
+            medplumStatus={organization?.medplum_connection_status ?? null}
             onAgentUpdated={setPhysician}
             onAskChange={setAskConfiguration}
           />
