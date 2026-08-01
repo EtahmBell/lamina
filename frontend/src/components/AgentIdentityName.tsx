@@ -9,7 +9,7 @@ export function AgentIdentityName({
 
   return (
     <span className={`agent-identity-name ${className}`.trim()}>
-      Dr. {name}'s <strong className="agent-role-emphasis">Agent</strong>
+      Dr. {name} <strong className="agent-role-emphasis">Agent</strong>
     </span>
   )
 }
