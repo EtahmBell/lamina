@@ -82,17 +82,23 @@ The typed API client is `frontend/src/api/client.ts`. It contains the only brows
 
 ## Demo session
 
-Production authentication is not implemented. `frontend/src/session.ts` centrally defines the two
-synthetic identities needed for the guided demo:
+Production authentication is not implemented. `DemoSessionProvider` owns the controlled browser
+session, while `frontend/src/session.ts` centrally defines the only two selectable identities:
 
 | Role | NPI | Agent ID |
 |---|---|---|
-| Logged-in physician: Ethan Bell, MD, MS | `9000000999` | `agent-9000000999` |
-| Specialist review handoff: Lianne Cha, MD | `9000001000` | `agent-9000001000` |
+| Ethan Bell, MD, MS | `9000000999` | `agent-9000000999` |
+| Lianne Cha, MD | `9000001000` | `agent-9000001000` |
 
 Names, credentials, specialties, organization, lifecycle state, configuration, patients, clinical
 facts, posts, responses, and review state are loaded from FastAPI. Components do not repeat those
-identity constants.
+identity constants. The selected NPI is persisted as `lamina_demo_session_npi` only after it is
+validated against this allowlist.
+
+The sign-in screen is explicitly a synthetic physician selector with no password fields or claim
+of production security. **Switch physician / Sign out** clears the selected identity and all
+patient/post UI navigation keys, then returns to the selector. It does not mutate any backend
+record, agent lifecycle state, forum content, or Medplum data.
 
 ## Safe patient APIs
 
@@ -140,6 +146,30 @@ FHIR, names, exact birth dates, addresses, and contact details. The older
 must not be used by public frontend components.
 
 ## Ask Lamina and physician approval
+
+Patient detail and Network pages include one reusable, understated **Ask Lamina** composer. It is a
+contextual command surface, not a chat sidebar and not a second agent architecture. It has no
+conversation history, avatar, floating orb, or autonomous clinical-answer path.
+
+On a patient detail page, the composer receives the current backend-derived physician NPI and the
+selected physician-scoped `patient_ref`. Supported natural-language question requests call the
+same endpoint documented below and render the returned approval-required draft. Referral language
+is recognized but returns an explicit unsupported message because referral persistence and
+approval endpoints do not exist.
+
+On Network, the composer calls the existing published forum route with its bounded `q` filter:
+
+```http
+GET /forum/posts?status=published&q=SGLT2%20inhibitors
+```
+
+This searches titles, clinical questions, context summaries, and specialty tags for published
+records only. It does not call a model or expose drafts. Review and Profile hide the composer
+because there is no safe backend revision/explanation action to invoke there.
+
+The microphone control is disabled with visible explanatory copy. Deepgram/backend transcription
+is not implemented, so the frontend does not request microphone access or fabricate listening and
+transcription states. A future transcript must enter the same patient/network request handler.
 
 The patient page posts physician guidance to:
 
@@ -193,7 +223,8 @@ The UI renders the actual `candidate`, `physician_name`, `outcome`, `matched_cas
 `response_id`. The backend Agents SDK remains responsible for panel-scoped retrieval and drafting.
 No response is fabricated if the backend abstains or fails.
 
-The Lianne demo handoff uses:
+The selected physician's Review page uses their own NPI for every inbox, grounding-review, and
+approval call. During the guided flow, Lianne's calls are:
 
 ```http
 GET  /physicians/9000001000/review-inbox
@@ -216,14 +247,14 @@ approval, and monitoring errors are shown as concise failures with retry where u
 path falls back to mock data or reports success after a timer.
 
 The selected safe patient reference and most recent post are stored in browser local storage only
-to preserve navigation context. All clinical and workflow truth is reloaded from FastAPI.
+to preserve navigation context. Those keys are scoped by physician NPI and cleared on sign-out.
+All clinical and workflow truth is reloaded from FastAPI.
 
 ## Intentional static values
 
 The remaining product-level demo constants are:
 
-- Ethan's NPI and agent ID for the unauthenticated demo session.
-- Lianne's NPI and agent ID for the explicit specialist-review handoff.
+- Ethan's and Lianne's NPIs and agent IDs in one synthetic-session allowlist.
 - Navigation labels, UI copy, local-storage keys, and other visual configuration.
 
 There are no hardcoded patients, clinical facts, posts, responses, articles, recommendations,
@@ -251,22 +282,44 @@ There is currently no frontend test script in `package.json`.
 
 ## Demo walkthrough
 
-1. Start FastAPI, Vite, and the configured synthetic Medplum/OpenAI services.
-2. Open the app; Ethan and his backend-derived profile appear.
-3. Open **My Patients** and select an authorized synthetic patient.
-4. Review its bounded Medplum conditions, medications, and observations.
-5. Enter a question under **Ask Lamina** and generate a draft.
-6. Review the structured draft and approve it as Ethan.
-7. Confirm the published post appears in **Network**.
-8. Trigger grounded monitoring from the patient workflow.
-9. Open **Review Inbox**, inspect Lianne's returned draft and grounding evidence, and approve it.
-10. Return to **Network** and confirm both physician-approved contributions persist after refresh.
-11. Search for a real physician and confirm the result is labeled as an NPPES directory profile,
-    unclaimed, with a reserved/inactive agent rather than a participating physician.
+Lamina supports two database-backed presentation modes. The frontend uses the same FastAPI routes
+in both and never substitutes local arrays:
+
+| Mode | Command | Starting state |
+|---|---|---|
+| Live workflow (canonical) | `.\scripts\reset-demo.ps1` | Zero Ethan/Lianne posts and responses |
+| Populated showcase | `.\scripts\seed-showcase-content.ps1` | Four synthetic discussions and two synthetic responses |
+
+The showcase seed is idempotent and non-destructive. It requires the two synthetic demo agents to
+be active, inserts only stable showcase IDs, and preserves the full NPPES directory and all
+physician, organization, activation, configuration, and Medplum state. Run the reset command to
+switch cleanly back to live workflow mode.
+
+Before recording, from the repository root:
+
+```powershell
+.\scripts\reset-demo.ps1
+.\scripts\verify-demo-ready.ps1
+```
+
+The reset makes a selective application-row backup under `data/processed/backups/`; it never copies
+or modifies the NPPES directory or the preserved physician, organization, activation, and Medplum
+mapping state.
+
+1. Open the app and confirm the Network has zero discussions.
+2. Select **Ethan Bell, MD, MS** and open his authorized synthetic patient.
+3. Review bounded Medplum context, enter the question, and generate the real draft.
+4. Approve and publish as Ethan; Network now contains exactly that one post.
+5. Run **Search physician network** and confirm Lianne is found with one authorized similar case.
+6. Use **Switch physician / Sign out**, then select **Lianne Cha, MD**.
+7. Open **Review**, inspect the real persisted Medplum-grounded response, and approve it.
+8. Sign out, sign back in as Ethan, and open the Network thread.
+9. Confirm Ethan's question and Lianne's approved response persist after refresh.
+10. Search for a real physician and confirm the NPPES result remains unclaimed/reserved.
 
 ## Capabilities not represented
 
-- Production login/session switching is deferred; current identity routing is explicit demo state.
+- Production authentication is deferred; the current two-profile selector is explicit demo state.
 - Deepgram voice capture is not implemented, so Ask Lamina is typed only.
 - Connection/referral persistence has no backend route and is therefore omitted.
 - Post editing is omitted because no safe existing edit endpoint is available.

@@ -136,6 +136,9 @@ def test_question_approval_feed_provenance_and_ownership(client: TestClient) -> 
     ).status_code == 200
     feed = client.get("/forum/posts", params={"specialty": "Endocrinology"}).json()
     assert [item["id"] for item in feed["posts"]] == [post["id"]]
+    search = client.get("/forum/posts", params={"q": "medication change"}).json()
+    assert [item["id"] for item in search["posts"]] == [post["id"]]
+    assert client.get("/forum/posts", params={"q": "unrelated phrase"}).json()["posts"] == []
 
 
 def test_response_requires_published_post(client: TestClient) -> None:
@@ -165,6 +168,12 @@ def test_complete_ethan_to_lianne_response_workflow(client: TestClient) -> None:
     response = drafted.json()
     assert response["status"] == "awaiting_physician_approval"
     assert client.get(f"/forum/posts/{post['id']}").json()["responses"] == []
+    ethan_inbox = client.get(f"/physicians/{DEMO_NPI}/review-inbox").json()
+    lianne_inbox = client.get(f"/physicians/{LIANNE_NPI}/review-inbox").json()
+    assert response["id"] not in {
+        item["id"] for item in ethan_inbox["response_drafts"]
+    }
+    assert [item["id"] for item in lianne_inbox["response_drafts"]] == [response["id"]]
     assert client.post(
         f"/forum/responses/{response['id']}/approve",
         json={"physician_npi": DEMO_NPI},

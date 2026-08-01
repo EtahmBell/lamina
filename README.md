@@ -69,11 +69,11 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open `http://localhost:5173`. **My Patients** uses the centralized `VITE_API_BASE_URL`
-configuration and real Lamina endpoints for Ethan's authorized synthetic Medplum panel, bounded
-case context, draft generation, physician approval, grounded monitoring, and Lianne's review
-inbox. **Network** loads published forum content and NPPES search results from the backend. Static
-articles, fake patient/post data, and the generic frontend assistant have been removed.
+Open `http://localhost:5173`. The app first shows a controlled selector for the two synthetic demo
+physicians, Ethan Bell and Lianne Cha. **My Patients**, **Review**, and **Profile** use the selected
+physician's real backend context. **Network** loads published forum content and NPPES search results
+from the backend. Static articles, fake patient/post data, and the generic frontend assistant have
+been removed. This hackathon session selector is not production authentication.
 
 For the deployed Vercel frontend, set `VITE_API_BASE_URL` to the HTTPS URL of the tunnel forwarding
 to local FastAPI, then redeploy. Never set the deployed value to localhost and never place OpenAI
@@ -89,6 +89,64 @@ The helper checks `cloudflared` and backend health before running
 `cloudflared tunnel --url http://127.0.0.1:8001`. Use `.\scripts\verify-demo-ready.ps1` for a
 secret-safe readiness audit of the local environment, demo database, provider health, frontend,
 and deployed-origin CORS. This does not create an account-managed tunnel or install a service.
+
+## Clean live-demo start
+
+Reset only disposable Ethan/Lianne forum workflow activity, then verify the complete demo stack:
+
+```powershell
+.\scripts\reset-demo.ps1
+.\scripts\verify-demo-ready.ps1
+```
+
+The reset creates a small selective SQLite backup under `data/processed/backups/` before deleting
+anything. It removes demo posts, responses, monitoring runs, generation/grounding rows, forum
+Medplum links, and related workflow audit events. It does not copy or modify the 1,262,313-row
+NPPES directory, physician profiles, claims, activation/configuration, organization memberships,
+Medplum connection configuration, Practitioner mappings, or synthetic patients. It is idempotent.
+
+Start the backend and frontend after readiness succeeds:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn api.main:app `
+  --reload --host 127.0.0.1 --port 8001 --env-file .env
+
+Set-Location .\frontend
+npm run dev
+```
+
+The recording flow is: select Ethan, open his patient, generate and approve a question, run
+monitoring, sign out, select Lianne, approve her real grounded response in **Review**, sign out,
+then select Ethan and open the published thread. The network intentionally begins empty and is
+created live during the presentation.
+
+## Optional populated showcase
+
+To demonstrate the richer physician network before running the live workflow, seed four small,
+synthetic, physician-approved showcase discussions and two responses:
+
+```powershell
+.\scripts\seed-showcase-content.ps1
+```
+
+The showcase command writes only stable, allowlisted Ethan/Lianne forum IDs through an idempotent
+SQLite seed. It never recreates the database, changes NPPES rows, or modifies physician claims,
+activation, configuration, organization membership, or Medplum data. Running it repeatedly does
+not duplicate content. Return to the canonical zero-content live-demo state with:
+
+```powershell
+.\scripts\reset-demo.ps1
+```
+
+The frontend has no mock-content toggle: both modes are rendered from the same FastAPI forum APIs.
+
+On patient detail and Network screens, the restrained **Ask Lamina** composer provides contextual
+typed shortcuts into existing backend workflows. Patient requests such as "Has anyone seen
+something similar?" reuse the physician-scoped Medplum post-generation endpoint and still produce
+only an approval-required draft. Network requests search only published backend discussions.
+Referral and draft-revision requests return an honest unsupported result because those backend
+workflows do not exist. The microphone is disabled rather than simulating voice input; Deepgram is
+not implemented. There is no generic chat history or browser-to-OpenAI connection.
 
 To add the fictional Ethan Bell profile to an existing full NPPES database without rebuilding or
 removing any records, run:

@@ -1300,6 +1300,7 @@ async def generate_forum_post_draft(
 @app.get("/forum/posts")
 def list_forum_posts(
     specialty: str | None = None,
+    q: Annotated[str | None, Query(min_length=2, max_length=200)] = None,
     status: str = "published",
     author_physician_npi: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -1315,6 +1316,15 @@ def list_forum_posts(
     if specialty:
         sql += " AND EXISTS (SELECT 1 FROM json_each(specialty_tags_json) WHERE value = ?)"
         params.append(specialty)
+    if q:
+        search_term = f"%{q.strip().casefold()}%"
+        sql += """
+          AND (
+            lower(title) LIKE ? OR lower(clinical_question) LIKE ?
+            OR lower(context_summary) LIKE ? OR lower(specialty_tags_json) LIKE ?
+          )
+        """
+        params.extend((search_term, search_term, search_term, search_term))
     sql += " ORDER BY published_at DESC, created_at DESC LIMIT ? OFFSET ?"
     params.extend((limit, offset))
     with connect() as connection:

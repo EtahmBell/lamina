@@ -1,84 +1,81 @@
 import type { AgentDetails } from '../api/client'
+import { Brand } from './Brand'
+import { PhysicianAvatar } from './PhysicianAvatar'
 
 export type NavKey = 'patients' | 'network' | 'reviews' | 'profile'
 
-const navItems: Array<{ key: NavKey; label: string; short: string }> = [
-  { key: 'patients', label: 'My Patients', short: 'PT' },
-  { key: 'network', label: 'Network', short: 'NW' },
-  { key: 'reviews', label: 'Review Inbox', short: 'RV' },
-  { key: 'profile', label: 'Profile', short: 'ME' },
+const navItems: Array<{ key: NavKey; label: string; hint: string }> = [
+  { key: 'patients', label: 'Patients', hint: 'Clinical workspace' },
+  { key: 'network', label: 'Network', hint: 'Physician discussion' },
+  { key: 'reviews', label: 'Review', hint: 'Approval queue' },
+  { key: 'profile', label: 'Profile', hint: 'Identity & settings' },
 ]
-
-function initials(name: string): string {
-  return name
-    .replace(/,.*$/, '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('')
-}
 
 export function Sidebar({
   active,
   physician,
+  organizationName,
   onNavigate,
+  onSignOut,
 }: {
   active: NavKey
   physician: AgentDetails | null
+  organizationName: string | null
   onNavigate: (key: NavKey) => void
+  onSignOut: () => void
 }) {
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white px-3 py-5 max-md:w-20">
-      <div className="mb-8 flex items-center gap-3 px-2">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-lg font-bold text-white">
-          L
+    <aside className="left-sidebar">
+      <div className="border-b border-[var(--border)] px-2 pb-6 max-md:px-0 max-md:text-center">
+        <div className="max-md:[&_.wordmark]:hidden">
+          <Brand />
         </div>
-        <div className="max-md:hidden">
-          <div className="text-xl font-bold tracking-tight text-slate-900">Lamina</div>
-          <div className="text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
-            Physician network
-          </div>
+        <div className="mt-1 text-[10px] font-bold tracking-[0.12em] text-[var(--text-secondary)] uppercase max-md:hidden">
+          Physician network
         </div>
       </div>
 
-      <nav className="flex flex-col gap-1">
+      <nav className="mt-6 flex flex-col gap-1.5" aria-label="Primary navigation">
         {navItems.map((item) => (
           <button
             key={item.key}
             type="button"
+            aria-current={active === item.key ? 'page' : undefined}
             onClick={() => onNavigate(item.key)}
-            className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${
-              active === item.key
-                ? 'bg-indigo-50 text-indigo-700'
-                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-            }`}
+            className={`sidebar-nav-item ${active === item.key ? 'sidebar-nav-item-active' : ''}`}
           >
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[10px] font-bold shadow-sm ring-1 ring-slate-200">
-              {item.short}
-            </span>
-            <span className="max-md:hidden">{item.label}</span>
+            <span>{item.label}</span>
+            <span className="sidebar-nav-hint">{item.hint}</span>
           </button>
         ))}
       </nav>
 
-      <div className="mt-auto rounded-2xl bg-slate-50 p-3 max-md:bg-transparent max-md:p-1">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
-            {physician ? initials(physician.physician.display_name) : 'EB'}
-          </div>
+      <div className="mt-auto border-t border-[var(--border)] px-2 pt-5 max-md:px-0">
+        <div className="flex items-center gap-3 max-md:justify-center">
+          {physician && (
+            <PhysicianAvatar
+              npi={physician.physician_npi}
+              name={physician.physician.display_name}
+              size="small"
+            />
+          )}
           <div className="min-w-0 max-md:hidden">
-            <div className="truncate text-sm font-semibold text-slate-900">
-              {physician?.physician.display_name ?? 'Loading physician...'}
+            <div className="physician-name truncate text-base font-bold leading-tight">
+              {physician?.physician.display_name ?? 'Loading'}
             </div>
-            <div className="truncate text-xs text-slate-500">
+            <div className="mt-1 truncate text-xs text-[var(--text-secondary)]">
               {physician?.physician.primary_specialty ?? 'Demo session'}
             </div>
           </div>
         </div>
-        <div className="mt-2 text-[10px] leading-relaxed text-slate-400 max-md:hidden">
-          Synthetic demo session. Production authentication is deferred.
+        <div className="mt-3 text-[10px] leading-relaxed text-[var(--text-secondary)] max-md:hidden">
+          {organizationName && <>{organizationName}<br /></>}
+          Synthetic demo session
         </div>
+        <button type="button" onClick={onSignOut} className="text-action mt-3 max-md:text-[11px]">
+          <span className="max-md:hidden">Switch physician / Sign out</span>
+          <span className="hidden max-md:inline">Exit</span>
+        </button>
       </div>
     </aside>
   )

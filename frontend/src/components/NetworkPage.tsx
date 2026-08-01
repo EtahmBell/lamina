@@ -1,22 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   getForumFeed,
   getForumPost,
   getPhysicianProfile,
   searchPhysicians,
+  type AgentDetails,
   type ForumPost,
   type PhysicianDirectoryResult,
 } from '../api/client'
-import { displayError } from '../utils'
+import { ASK_LAMINA_UNSUPPORTED, isReferralRequest, networkSearchTerms } from '../askLamina'
+import { displayError, formatTimestamp } from '../utils'
+import { AskLaminaComposer } from './AskLaminaComposer'
 import { ForumPostView } from './ForumPostView'
+import { PhysicianAvatar } from './PhysicianAvatar'
 import { Badge, EmptyState, ErrorBanner, PageLoading } from './ui'
 
 export function NetworkPage({
   focusedPostId,
-  viewerPhysicianNpi,
+  physician,
 }: {
   focusedPostId: string | null
-  viewerPhysicianNpi: string
+  physician: AgentDetails
 }) {
   const [posts, setPosts] = useState<ForumPost[]>([])
   const [selectedPost, setSelectedPost] = useState<ForumPost | null>(null)
@@ -36,14 +40,14 @@ export function NetworkPage({
       const feed = await getForumFeed()
       setPosts(feed)
       if (focusedPostId) {
-        setSelectedPost(await getForumPost(focusedPostId, viewerPhysicianNpi))
+        setSelectedPost(await getForumPost(focusedPostId, physician.physician_npi))
       }
     } catch (loadError) {
       setError(displayError(loadError))
     } finally {
       setLoading(false)
     }
-  }, [focusedPostId, viewerPhysicianNpi])
+  }, [focusedPostId, physician.physician_npi])
 
   useEffect(() => {
     void loadFeed()
@@ -67,7 +71,7 @@ export function NetworkPage({
     )
   }, [feedSearch, posts])
 
-  const runDirectorySearch = async (event: React.FormEvent) => {
+  const runDirectorySearch = async (event: FormEvent) => {
     event.preventDefault()
     if (directoryQuery.trim().length < 2) return
     setSearching(true)
@@ -97,98 +101,132 @@ export function NetworkPage({
     }
   }
 
+  const askLamina = async (request: string): Promise<string> => {
+    if (isReferralRequest(request) || /\b(ask|draft|question)\b/i.test(request)) {
+      return ASK_LAMINA_UNSUPPORTED
+    }
+    const results = await getForumFeed(networkSearchTerms(request))
+    setSelectedPost(null)
+    setFeedSearch('')
+    setPosts(results)
+    return results.length
+      ? `Found ${results.length} published discussion${results.length === 1 ? '' : 's'}.`
+      : 'No published discussions matched this request.'
+  }
+
   if (loading && posts.length === 0) {
-    return (
-      <div className="mx-auto max-w-5xl px-6 py-8">
-        <PageLoading>Loading published physician discussions...</PageLoading>
-      </div>
-    )
+    return <div className="page-shell"><PageLoading>Loading published physician discussions...</PageLoading></div>
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8 pb-24">
-      <div className="flex flex-wrap items-end gap-3">
+    <div className="page-shell">
+      <header className="page-hero">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Physician Network</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Published, physician-approved discussions and the live NPPES directory.
+          <div className="eyebrow">Clinical discussion</div>
+          <h1 className="page-title mt-1">Physician Network</h1>
+          <p className="secondary-copy mt-2">
+            Learn from physician-approved clinical discussions across your network.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void loadFeed()}
-          className="ml-auto text-sm font-semibold text-indigo-700 hover:text-indigo-900"
-        >
+        <button type="button" onClick={() => void loadFeed()} className="text-action ml-auto">
           Refresh
         </button>
-      </div>
+      </header>
 
       {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
 
+      <div className="mt-6">
+        <AskLaminaComposer
+          contextLabel={selectedPost
+            ? `${physician.physician.display_name} · selected discussion`
+            : `${physician.physician.display_name} · published network`}
+          placeholder="Find published discussions about a clinical topic..."
+          processingLabel="Searching your physician network..."
+          suggestions={[
+            'Find medication-tolerance discussions',
+            'Show recent endocrinology questions',
+          ]}
+          onSubmit={askLamina}
+        />
+      </div>
+
       {selectedPost ? (
         <section className="mt-6">
-          <button
-            type="button"
-            onClick={() => setSelectedPost(null)}
-            className="mb-4 text-sm font-semibold text-indigo-700 hover:text-indigo-900"
-          >
+          <button type="button" onClick={() => setSelectedPost(null)} className="text-action mb-4">
             Back to network
           </button>
           <ForumPostView post={selectedPost} />
         </section>
       ) : (
         <>
-          <section className="mt-6">
+          <section className="mt-8">
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-xl font-bold text-slate-900">Published discussions</h2>
-              <Badge tone="emerald">Backend feed</Badge>
+              <h2 className="section-title">Published discussions</h2>
+              <Badge tone="success">Physician approved</Badge>
+              <span className="metadata ml-auto">{visiblePosts.length} discussions</span>
             </div>
             <input
               value={feedSearch}
               onChange={(event) => setFeedSearch(event.target.value)}
               placeholder="Filter published discussions"
-              className="mt-4 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+              aria-label="Filter published discussions"
+              className="input-control mt-4"
             />
             <div className="mt-4 space-y-4">
               {visiblePosts.map((post) => (
-                <button
-                  key={post.id}
-                  type="button"
-                  onClick={() => setSelectedPost(post)}
-                  className="block w-full rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-indigo-300"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-slate-900">{post.author.physician_name}</span>
-                    <span className="text-sm text-slate-500">{post.author.verified_specialty}</span>
-                    <span className="ml-auto text-xs text-slate-400">
-                      {post.published_response_count} response
+                <article key={post.id} className="feed-card">
+                  <div className="flex items-center gap-3">
+                    <PhysicianAvatar
+                      npi={post.author.physician_npi}
+                      name={post.author.physician_name}
+                      size="medium"
+                    />
+                    <div className="min-w-0">
+                      <div className="physician-name truncate text-lg font-bold">
+                        {post.author.physician_name}
+                      </div>
+                      <div className="metadata mt-0.5">
+                        {post.author.verified_specialty} · {formatTimestamp(post.published_at)}
+                      </div>
+                    </div>
+                    <span className="ml-auto"><Badge tone="success">Approved</Badge></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPost(post)}
+                    className="mt-5 block w-full text-left"
+                  >
+                    <h3 className="publication-title text-[1.35rem]">{post.title}</h3>
+                    <p className="body-copy mt-2 line-clamp-3 text-[0.98rem] text-[var(--text-secondary)]">
+                      {post.clinical_question}
+                    </p>
+                  </button>
+                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-4">
+                    {post.specialty_tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}
+                    <span className="feed-response-count ml-auto">
+                      {post.published_response_count} physician response
                       {post.published_response_count === 1 ? '' : 's'}
                     </span>
                   </div>
-                  <h3 className="mt-3 text-lg font-bold text-slate-900">{post.title}</h3>
-                  <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-slate-600">
-                    {post.clinical_question}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {post.specialty_tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}
-                  </div>
-                </button>
+                </article>
               ))}
               {visiblePosts.length === 0 && (
-                <EmptyState
-                  title="No published discussions yet."
-                  detail="Lamina does not insert sample articles or posts when the backend feed is empty."
-                />
+                <div className="surface p-5">
+                  <EmptyState
+                    title="No discussions have been published yet."
+                    detail="Use the optional showcase seed for a populated demo, or publish through the physician approval workflow."
+                  />
+                </div>
               )}
             </div>
           </section>
 
-          <section className="mt-10 border-t border-slate-200 pt-8">
+          <section className="section-rule mt-10 pt-8">
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-xl font-bold text-slate-900">Physician Directory</h2>
-              <Badge tone="indigo">NPPES-backed search</Badge>
+              <h2 className="section-title">Physician Directory</h2>
+              <Badge tone="clinical">NPPES-backed search</Badge>
             </div>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="secondary-copy mt-1">
               Directory records do not imply that a physician joined or authorized Lamina.
             </p>
             <form onSubmit={runDirectorySearch} className="mt-4 flex flex-wrap gap-2">
@@ -196,76 +234,96 @@ export function NetworkPage({
                 value={directoryQuery}
                 onChange={(event) => setDirectoryQuery(event.target.value)}
                 placeholder="Search physician name or specialty"
-                className="min-w-64 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-400"
+                className="input-control min-w-64 flex-1"
               />
               <input
                 value={directoryState}
                 onChange={(event) => setDirectoryState(event.target.value.toUpperCase().slice(0, 2))}
                 placeholder="State"
                 aria-label="State abbreviation"
-                className="w-24 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm uppercase outline-none focus:border-indigo-400"
+                className="input-control w-24 uppercase"
               />
               <button
                 type="submit"
-                disabled={searching || directoryQuery.trim().length < 2}
-                className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-300"
+                disabled={searching || directoryQuery.trim().length < 2 ||
+                  (directoryState.length > 0 && directoryState.length !== 2)}
+                className="button-primary"
               >
                 {searching ? 'Searching...' : 'Search NPPES'}
               </button>
             </form>
 
             {selectedPhysician && (
-              <div className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone={selectedPhysician.source.toLowerCase() === 'synthetic' ? 'emerald' : 'slate'}>
-                    {selectedPhysician.source.toLowerCase() === 'synthetic'
-                      ? 'Synthetic Demo Physician'
-                      : 'NPPES Directory Profile'}
-                  </Badge>
-                  <Badge tone={selectedPhysician.agent_status === 'active' ? 'emerald' : 'amber'}>
-                    {selectedPhysician.agent_status === 'active'
-                      ? 'Active Lamina agent'
-                      : `${selectedPhysician.agent_status} agent · inactive`}
-                  </Badge>
+              <article className="surface mt-5 border-l-4 border-l-[var(--clinical)] px-5 py-5">
+                <div className="flex items-start gap-4">
+                  <PhysicianAvatar
+                    npi={selectedPhysician.npi}
+                    name={selectedPhysician.display_name}
+                    size="large"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone={selectedPhysician.source.toLowerCase() === 'synthetic' ? 'success' : 'clinical'}>
+                        {selectedPhysician.source.toLowerCase() === 'synthetic'
+                          ? 'Active synthetic physician'
+                          : 'NPPES directory profile'}
+                      </Badge>
+                      <Badge tone={selectedPhysician.agent_status === 'active' ? 'success' : 'warning'}>
+                        {selectedPhysician.agent_status === 'active'
+                          ? 'Active Lamina agent'
+                          : `${selectedPhysician.agent_status} agent · inactive`}
+                      </Badge>
+                    </div>
+                    <h3 className="physician-name mt-4 text-2xl font-bold">{selectedPhysician.display_name}</h3>
+                    <p className="secondary-copy mt-1">
+                      {selectedPhysician.primary_specialty || 'Specialty not listed'}
+                      {selectedPhysician.city ? ` · ${selectedPhysician.city}, ${selectedPhysician.state}` : ''}
+                    </p>
+                    <p className="metadata mt-3">NPI {selectedPhysician.npi}</p>
+                    {selectedPhysician.source.toLowerCase() !== 'synthetic' && (
+                      <p className="secondary-copy mt-4 border-t border-[var(--border)] pt-4">
+                        This physician has not claimed or authorized this Lamina directory profile.
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <h3 className="mt-3 text-lg font-bold text-slate-900">{selectedPhysician.display_name}</h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  {selectedPhysician.primary_specialty || 'Specialty not listed'}
-                  {selectedPhysician.city ? ` · ${selectedPhysician.city}, ${selectedPhysician.state}` : ''}
-                </p>
-                <p className="mt-2 text-xs text-slate-500">NPI {selectedPhysician.npi}</p>
-              </div>
+              </article>
             )}
 
-            <div className="mt-4 space-y-3">
-              {directoryResults.map((physician) => (
+            <div className="surface mt-5 divide-y divide-[var(--border)]">
+              {directoryResults.map((directoryPhysician) => (
                 <button
-                  key={physician.npi}
+                  key={directoryPhysician.npi}
                   type="button"
-                  onClick={() => void openPhysician(physician.npi)}
-                  className="flex w-full flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left hover:border-indigo-300"
+                  onClick={() => void openPhysician(directoryPhysician.npi)}
+                  className="flex w-full flex-wrap items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-[#f8f2e9]"
                 >
+                  <PhysicianAvatar
+                    npi={directoryPhysician.npi}
+                    name={directoryPhysician.display_name}
+                    size="small"
+                  />
                   <div>
-                    <div className="font-semibold text-slate-900">{physician.display_name}</div>
-                    <div className="text-sm text-slate-500">
-                      {physician.primary_specialty || 'Specialty not listed'}
-                      {physician.city ? ` · ${physician.city}, ${physician.state}` : ''}
+                    <div className="physician-name text-lg font-bold">{directoryPhysician.display_name}</div>
+                    <div className="secondary-copy mt-0.5">
+                      {directoryPhysician.primary_specialty || 'Specialty not listed'}
+                      {directoryPhysician.city ? ` · ${directoryPhysician.city}, ${directoryPhysician.state}` : ''}
                     </div>
                   </div>
                   <div className="ml-auto flex flex-wrap gap-2">
-                    <Badge tone={physician.source.toLowerCase() === 'synthetic' ? 'emerald' : 'slate'}>
-                      {physician.source.toLowerCase() === 'synthetic' ? 'Synthetic' : 'NPPES'}
+                    <Badge tone={directoryPhysician.source.toLowerCase() === 'synthetic' ? 'success' : 'clinical'}>
+                      {directoryPhysician.source.toLowerCase() === 'synthetic' ? 'Synthetic' : 'NPPES'}
                     </Badge>
-                    <Badge tone={physician.agent_status === 'active' ? 'emerald' : 'amber'}>
-                      {physician.agent_status === 'active' ? 'Active' : 'Unclaimed · reserved'}
+                    <Badge tone={directoryPhysician.agent_status === 'active' ? 'success' : 'warning'}>
+                      {directoryPhysician.agent_status === 'active' ? 'Active' : 'Unclaimed · reserved'}
                     </Badge>
                   </div>
                 </button>
               ))}
-              {directoryQuery.trim().length >= 2 && !searching && directoryResults.length === 0 && (
-                <p className="text-sm text-slate-500">No physicians matched the submitted search.</p>
-              )}
             </div>
+            {directoryQuery.trim().length >= 2 && !searching && directoryResults.length === 0 && (
+              <p className="secondary-copy mt-4">No physicians matched the submitted search.</p>
+            )}
           </section>
         </>
       )}

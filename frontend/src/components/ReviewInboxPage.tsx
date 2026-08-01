@@ -1,25 +1,25 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   approveForumResponse,
-  getAgent,
   getGroundingReview,
   getReviewInbox,
   type AgentDetails,
   type ForumResponse,
   type GroundingReview,
 } from '../api/client'
-import { demoSession } from '../session'
 import { displayError } from '../utils'
+import { PhysicianAvatar } from './PhysicianAvatar'
 import { Badge, EmptyState, ErrorBanner, PageLoading, PrimaryButton } from './ui'
 
 export function ReviewInboxPage({
   focusedPostId,
+  physician,
   onApproved,
 }: {
   focusedPostId: string | null
+  physician: AgentDetails
   onApproved: (postId: string) => void
 }) {
-  const [reviewer, setReviewer] = useState<AgentDetails | null>(null)
   const [responses, setResponses] = useState<ForumResponse[]>([])
   const [selected, setSelected] = useState<ForumResponse | null>(null)
   const [grounding, setGrounding] = useState<GroundingReview | null>(null)
@@ -34,23 +34,19 @@ export function ReviewInboxPage({
     try {
       if (response.provenance.grounding.source_system === 'medplum') {
         setGrounding(
-          await getGroundingReview(response.id, demoSession.specialistReviewer.npi),
+          await getGroundingReview(response.id, physician.physician_npi),
         )
       }
     } catch (loadError) {
       setError(displayError(loadError))
     }
-  }, [])
+  }, [physician.physician_npi])
 
   const loadInbox = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [agent, inbox] = await Promise.all([
-        getAgent(demoSession.specialistReviewer.agentId),
-        getReviewInbox(demoSession.specialistReviewer.npi),
-      ])
-      setReviewer(agent)
+      const inbox = await getReviewInbox(physician.physician_npi)
       setResponses(inbox.response_drafts)
       const preferred =
         inbox.response_drafts.find((response) => response.post_id === focusedPostId) ??
@@ -66,7 +62,7 @@ export function ReviewInboxPage({
     } finally {
       setLoading(false)
     }
-  }, [focusedPostId, openResponse])
+  }, [focusedPostId, openResponse, physician.physician_npi])
 
   useEffect(() => {
     void loadInbox()
@@ -79,7 +75,7 @@ export function ReviewInboxPage({
     try {
       const approved = await approveForumResponse(
         selected.id,
-        demoSession.specialistReviewer.npi,
+        physician.physician_npi,
       )
       onApproved(approved.post_id)
     } catch (approvalError) {
@@ -90,38 +86,41 @@ export function ReviewInboxPage({
   }
 
   if (loading) {
-    return (
-      <div className="mx-auto max-w-5xl px-6 py-8">
-        <PageLoading>Loading specialist review inbox...</PageLoading>
-      </div>
-    )
+    return <div className="page-shell"><PageLoading>Loading physician review...</PageLoading></div>
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8 pb-24">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="page-shell">
+      <header className="page-hero">
         <div>
-          <div className="text-xs font-bold tracking-wide text-indigo-600 uppercase">
-            Synthetic specialist handoff
-          </div>
-          <h1 className="mt-1 text-3xl font-bold text-slate-900">Review Inbox</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Reviewing as {reviewer?.physician.display_name ?? 'the configured specialist'} ·{' '}
-            {reviewer?.physician.primary_specialty}
+          <div className="eyebrow">Physician approval</div>
+          <h1 className="page-title mt-1">Publication Review</h1>
+          <p className="secondary-copy mt-2">
+            Review drafts prepared by Lamina before anything is published on your behalf.
           </p>
         </div>
-        <Badge tone="amber">Demo identity switch</Badge>
-        <button
-          type="button"
-          onClick={() => void loadInbox()}
-          className="ml-auto text-sm font-semibold text-indigo-700 hover:text-indigo-900"
-        >
+        <button type="button" onClick={() => void loadInbox()} className="text-action ml-auto">
           Refresh
         </button>
+      </header>
+
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <PhysicianAvatar
+          npi={physician.physician_npi}
+          name={physician.physician.display_name}
+          size="small"
+        />
+        <div>
+          <div className="physician-name text-lg font-bold">
+            {physician.physician.display_name}
+          </div>
+          <span className="metadata">{physician.physician.primary_specialty}</span>
+        </div>
+        <Badge tone="warning">Synthetic demo handoff</Badge>
       </div>
-      <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-500">
-        Production authentication is deferred. This explicit synthetic handoff demonstrates that
-        only the physician who owns the response can approve it.
+      <p className="secondary-copy mt-2 max-w-3xl">
+        Production authentication is deferred. This explicit handoff demonstrates that only the
+        physician who owns the response can approve it.
       </p>
 
       {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
@@ -130,28 +129,29 @@ export function ReviewInboxPage({
         <div className="mt-6">
           <EmptyState
             title="No pending specialist reviews."
-            detail="A grounded response will appear only after backend monitoring creates one."
+            detail="A grounded response appears only after backend monitoring creates one."
           />
         </div>
       ) : (
-        <div className="mt-6 grid gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
-          <aside className="space-y-2">
+        <div className="mt-7 grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+          <aside className="surface h-fit divide-y divide-[var(--border)]" aria-label="Pending responses">
+            <div className="eyebrow px-4 py-3 text-[var(--clinical)]">Responses</div>
             {responses.map((response) => (
               <button
                 key={response.id}
                 type="button"
                 onClick={() => void openResponse(response)}
-                className={`w-full rounded-2xl border p-4 text-left ${
+                className={`w-full border-l-2 px-4 py-4 text-left transition-colors ${
                   selected?.id === response.id
-                    ? 'border-indigo-300 bg-indigo-50'
-                    : 'border-slate-200 bg-white hover:border-indigo-200'
+                    ? 'border-l-[var(--accent)] bg-[#f3e9df]'
+                    : 'border-l-transparent hover:bg-[#f8f2e9]'
                 }`}
               >
-                <div className="text-xs font-semibold text-slate-500">
+                <div className="metadata">
                   {response.provenance.grounding.matched_case_count} matched case
                   {response.provenance.grounding.matched_case_count === 1 ? '' : 's'}
                 </div>
-                <div className="mt-1 line-clamp-2 font-semibold text-slate-900">
+                <div className="publication-title mt-1 line-clamp-3 text-base">
                   {response.headline}
                 </div>
               </button>
@@ -159,40 +159,46 @@ export function ReviewInboxPage({
           </aside>
 
           {selected && (
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap gap-2">
-                <Badge tone="indigo">AI drafted</Badge>
+            <article className="review-document">
+              <div className="eyebrow">Response draft</div>
+              <div className="mt-3 flex flex-wrap gap-2 border-b border-[var(--border)] pb-5">
+                <Badge>Draft prepared</Badge>
                 {selected.provenance.grounding.source_system === 'medplum' && (
-                  <Badge tone="emerald">Grounded in Medplum</Badge>
+                  <Badge tone="clinical">Grounded in Medplum</Badge>
                 )}
                 <Badge>
                   {selected.provenance.grounding.matched_case_count} similar case
-                  {selected.provenance.grounding.matched_case_count === 1 ? '' : 's'} found
+                  {selected.provenance.grounding.matched_case_count === 1 ? '' : 's'}
                 </Badge>
-                <Badge tone="amber">Awaiting physician approval</Badge>
+                <Badge tone="warning">Awaiting physician approval</Badge>
               </div>
-              <h2 className="mt-4 text-xl font-bold text-slate-900">{selected.headline}</h2>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-                {selected.content}
-              </p>
+              <h2 className="publication-title mt-6 text-[1.45rem]">{selected.headline}</h2>
+              <p className="body-copy mt-3 whitespace-pre-wrap">{selected.content}</p>
 
               {grounding && (
-                <div className="mt-5 rounded-2xl bg-slate-50 p-4">
-                  <h3 className="font-bold text-slate-900">Grounding review</h3>
-                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                <section className="mt-7 border-l-2 border-l-[var(--clinical)] bg-[#f2f0eb] px-5 py-4">
+                  <div className="eyebrow text-[var(--clinical)]">Grounding review</div>
+                  <p className="secondary-copy mt-2 text-[var(--text-primary)]">
                     {grounding.grounding.relevance_reason}
                   </p>
-                  <GroundingList title="Similarities" items={grounding.grounding.similarities} />
-                  <GroundingList title="Differences" items={grounding.grounding.differences} />
-                  <GroundingList title="Unknowns" items={grounding.grounding.unknowns} />
-                </div>
+                  <div className="mt-4 grid gap-5 md:grid-cols-3">
+                    <GroundingList title="Similarities" items={grounding.grounding.similarities} />
+                    <GroundingList title="Differences" items={grounding.grounding.differences} />
+                    <GroundingList title="Unknowns" items={grounding.grounding.unknowns} />
+                  </div>
+                </section>
               )}
 
-              <div className="mt-5 border-t border-slate-100 pt-4">
-                <PrimaryButton tone="emerald" disabled={approving} onClick={() => void approve()}>
-                  {approving ? 'Publishing specialist response...' : 'Approve as specialist'}
-                </PrimaryButton>
-              </div>
+              <footer className="mt-7 flex flex-wrap items-center gap-4 border-t border-[var(--border)] pt-5">
+                <span className="metadata">
+                  Approval publishes this response under {physician.physician.display_name}'s authorship.
+                </span>
+                <div className="ml-auto">
+                  <PrimaryButton tone="approve" disabled={approving} onClick={() => void approve()}>
+                    {approving ? 'Publishing response...' : 'Approve response'}
+                  </PrimaryButton>
+                </div>
+              </footer>
             </article>
           )}
         </div>
@@ -204,10 +210,10 @@ export function ReviewInboxPage({
 function GroundingList({ title, items }: { title: string; items: string[] }) {
   if (!items.length) return null
   return (
-    <div className="mt-3">
-      <h4 className="text-xs font-bold tracking-wide text-slate-500 uppercase">{title}</h4>
-      <ul className="mt-1 space-y-1 text-sm text-slate-600">
-        {items.map((item) => <li key={item}>• {item}</li>)}
+    <div>
+      <h3 className="metadata font-bold tracking-[0.08em] uppercase">{title}</h3>
+      <ul className="mt-2 space-y-2 text-sm leading-relaxed text-[var(--text-secondary)]">
+        {items.map((item) => <li key={item} className="border-t border-[var(--border)] pt-2">{item}</li>)}
       </ul>
     </div>
   )

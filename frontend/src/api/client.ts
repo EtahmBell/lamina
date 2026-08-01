@@ -326,8 +326,9 @@ export function getForumPost(postId: string, viewerPhysicianNpi?: string): Promi
   return request(`/forum/posts/${encodeURIComponent(postId)}${query}`)
 }
 
-export async function getForumFeed(): Promise<ForumPost[]> {
+export async function getForumFeed(query?: string): Promise<ForumPost[]> {
   const params = new URLSearchParams({ status: 'published', limit: '100' })
+  if (query) params.set('q', query)
   const result = await request<{ posts: ForumPost[] }>(`/forum/posts?${params}`)
   return result.posts
 }

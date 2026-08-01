@@ -6,6 +6,7 @@ import {
   type OrganizationSummary,
 } from '../api/client'
 import { displayError, formatTimestamp } from '../utils'
+import { PhysicianAvatar } from './PhysicianAvatar'
 import { Badge, ErrorBanner } from './ui'
 
 export function ProfilePage({
@@ -26,46 +27,58 @@ export function ProfilePage({
   }, [organization])
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8 pb-24">
-      <div className="flex flex-wrap items-center gap-3">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Physician Profile</h1>
-          <p className="mt-1 text-sm text-slate-500">Loaded from the Lamina backend.</p>
-        </div>
-        <Badge tone="emerald">Synthetic demo physician</Badge>
-      </div>
-      {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
-
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-start gap-3">
+    <div className="page-shell">
+      <header className="profile-hero">
+        <PhysicianAvatar
+          npi={physician.physician_npi}
+          name={physician.physician.display_name}
+          size="hero"
+        />
+        <div className="min-w-0 flex-1">
+        <div className="eyebrow">Professional directory</div>
+        <div className="mt-2 flex flex-wrap items-start gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">{physician.physician.display_name}</h2>
-            <p className="mt-1 text-slate-500">{physician.physician.primary_specialty}</p>
+            <h1 className="page-title">{physician.physician.display_name}</h1>
+            <p className="mt-2 text-base text-[var(--text-secondary)]">
+              {physician.physician.primary_specialty}
+              {organization ? ` · ${organization.name}` : ''}
+            </p>
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
-            <Badge tone={physician.status === 'active' ? 'emerald' : 'amber'}>
-              Agent {physician.status}
+            <Badge tone="success">Synthetic demo physician</Badge>
+            <Badge tone={physician.status === 'active' ? 'success' : 'warning'}>
+              Lamina {physician.status}
             </Badge>
-            <Badge>{physician.physician.profile_status}</Badge>
           </div>
         </div>
-        <dl className="mt-6 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2">
-          <ProfileField label="NPI" value={physician.physician_npi} />
-          <ProfileField label="Organization" value={organization?.name ?? 'No organization returned'} />
-          <ProfileField label="Data source" value={physician.physician.data_source} />
-          <ProfileField label="Agent ID" value={physician.id} />
+        </div>
+      </header>
+
+      {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
+
+      <section className="mt-7">
+        <h2 className="section-title">Practice and identity</h2>
+        <dl className="surface mt-4 grid divide-y divide-[var(--border)] sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+          <div className="divide-y divide-[var(--border)]">
+            <ProfileField label="NPI" value={physician.physician_npi} />
+            <ProfileField label="Organization" value={organization?.name ?? 'No organization returned'} />
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            <ProfileField label="Profile source" value={physician.physician.data_source} />
+            <ProfileField label="Profile status" value={physician.physician.profile_status} />
+          </div>
         </dl>
       </section>
 
-      <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-6">
-        <h2 className="font-bold text-slate-900">Agent configuration</h2>
-        <div className="mt-4 grid gap-5 md:grid-cols-2">
+      <section className="section-rule mt-8 pt-7">
+        <h2 className="section-title">Clinical activity settings</h2>
+        <div className="mt-4 grid gap-x-8 gap-y-6 md:grid-cols-2">
           <TagGroup title="Verified specialties" tags={physician.configuration?.verified_specialties ?? []} />
           <TagGroup title="Declared expertise" tags={physician.configuration?.declared_expertise_tags ?? []} />
           <TagGroup title="Monitoring topics" tags={physician.configuration?.monitoring_topics ?? []} />
           <div>
-            <h3 className="text-xs font-bold tracking-wide text-slate-500 uppercase">Publication</h3>
-            <p className="mt-2 text-sm text-slate-700">
+            <h3 className="eyebrow text-[var(--clinical)]">Publication policy</h3>
+            <p className="secondary-copy mt-2 text-[var(--text-primary)]">
               {physician.effective_permissions.requires_physician_approval
                 ? 'Physician approval is required for every clinical publication.'
                 : 'Configuration unavailable.'}
@@ -74,20 +87,18 @@ export function ProfilePage({
         </div>
       </section>
 
-      <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="font-bold text-slate-900">Medplum connection</h2>
-          <Badge tone={integration?.status === 'connected' ? 'emerald' : 'amber'}>
-            {integration?.status ?? 'Loading'}
+      <section className="section-rule mt-8 pt-7">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="section-title">Clinical data connection</h2>
+          <Badge tone={integration?.status === 'connected' ? 'success' : 'warning'}>
+            Medplum {integration?.status ?? 'loading'}
           </Badge>
         </div>
-        <p className="mt-2 text-sm text-slate-600">
+        <p className="secondary-copy mt-2">
           Credentials remain server-side. The browser receives connection status only.
         </p>
         {integration?.last_verified_at && (
-          <p className="mt-2 text-xs text-slate-400">
-            Last verified {formatTimestamp(integration.last_verified_at)}
-          </p>
+          <p className="metadata mt-2">Last verified {formatTimestamp(integration.last_verified_at)}</p>
         )}
       </section>
     </div>
@@ -96,9 +107,9 @@ export function ProfilePage({
 
 function ProfileField({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <dt className="text-xs font-bold tracking-wide text-slate-400 uppercase">{label}</dt>
-      <dd className="mt-1 text-sm font-medium text-slate-800">{value}</dd>
+    <div className="px-5 py-4">
+      <dt className="metadata font-bold tracking-[0.08em] uppercase">{label}</dt>
+      <dd className="mt-1 text-sm font-semibold text-[var(--text-primary)]">{value}</dd>
     </div>
   )
 }
@@ -106,9 +117,11 @@ function ProfileField({ label, value }: { label: string; value: string }) {
 function TagGroup({ title, tags }: { title: string; tags: string[] }) {
   return (
     <div>
-      <h3 className="text-xs font-bold tracking-wide text-slate-500 uppercase">{title}</h3>
+      <h3 className="eyebrow text-[var(--clinical)]">{title}</h3>
       <div className="mt-2 flex flex-wrap gap-2">
-        {tags.length ? tags.map((tag) => <Badge key={tag}>{tag}</Badge>) : <span className="text-sm text-slate-400">None configured</span>}
+        {tags.length
+          ? tags.map((tag) => <Badge key={tag}>{tag}</Badge>)
+          : <span className="secondary-copy">None configured</span>}
       </div>
     </div>
   )

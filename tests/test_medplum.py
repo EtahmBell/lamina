@@ -702,6 +702,18 @@ def test_physician_patient_list_and_detail_use_opaque_scoped_references(client):
         f"/physicians/{LIANNE_NPI}/patients/{patient['patient_ref']}/case-context"
     )
     assert cross_panel.status_code == 404
+
+    lianne_payload = http.get(f"/physicians/{LIANNE_NPI}/patients").json()
+    assert lianne_payload["count"] == 1
+    lianne_patient = lianne_payload["patients"][0]
+    assert lianne_patient["patient_ref"].startswith("case-")
+    assert lianne_patient["patient_ref"] != patient["patient_ref"]
+    assert http.get(
+        f"/physicians/{LIANNE_NPI}/patients/{lianne_patient['patient_ref']}/case-context"
+    ).status_code == 200
+    assert http.get(
+        f"/physicians/{DEMO_NPI}/patients/{lianne_patient['patient_ref']}/case-context"
+    ).status_code == 404
     assert http.get("/physicians/1234567890/patients").status_code == 403
 
 

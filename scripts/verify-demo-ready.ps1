@@ -6,6 +6,10 @@ param(
 $ErrorActionPreference = "Stop"
 $script:failureCount = 0
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$databaseResult = $null
+$medplumReady = $false
+$ethanPanelReady = $false
+$liannePanelReady = $false
 
 function Write-Pass([string]$Message) {
   Write-Host "PASS: $Message" -ForegroundColor Green
@@ -85,11 +89,26 @@ if (-not (Test-Path -LiteralPath $databasePath)) {
     if (
       $databaseResult.demo_physicians -eq 2 -and
       $databaseResult.demo_agents -eq 2 -and
-      $databaseResult.demo_memberships -eq 2
+      $databaseResult.demo_memberships -eq 2 -and
+      $databaseResult.demo_configurations -eq 2 -and
+      $databaseResult.medplum_practitioner_mappings -eq 2
     ) {
-      Write-Pass "Synthetic Ethan and Lianne profiles, agents, and organization memberships are ready."
+      Write-Pass "Synthetic profiles, active configuration, memberships, and Medplum mappings are ready."
     } else {
       Write-Fail "Synthetic Ethan and Lianne demo setup is incomplete."
+    }
+    if (
+      $databaseResult.demo_agent_statuses."agent-9000000999" -eq "active" -and
+      $databaseResult.demo_agent_statuses."agent-9000001000" -eq "active"
+    ) {
+      Write-Pass "Ethan and Lianne agents are active."
+    } else {
+      Write-Fail "Ethan and Lianne must both be active before recording."
+    }
+    if ($databaseResult.published_posts -eq 0 -and $databaseResult.pending_responses -eq 0) {
+      Write-Pass "Forum starts clean with zero published posts and zero pending responses."
+    } else {
+      Write-Fail "Forum is not clean. Run .\scripts\reset-demo.ps1 before recording."
     }
   } catch {
     Write-Fail "The Lamina SQLite database could not be inspected safely."
@@ -118,12 +137,32 @@ if ($backendReachable) {
       $medplumHealth.authenticated -and
       $medplumHealth.fhir_reachable
     ) {
+      $medplumReady = $true
       Write-Pass "Medplum authentication and FHIR connectivity are healthy."
     } else {
       Write-Fail "Medplum is not fully configured, authenticated, and reachable."
     }
   } catch {
     Write-Fail "Medplum health check failed through the Lamina backend."
+  }
+
+  foreach ($physician in @(
+    @{ Name = "Ethan"; Npi = "9000000999" },
+    @{ Name = "Lianne"; Npi = "9000001000" }
+  )) {
+    try {
+      $panel = Invoke-RestMethod -Method Get `
+        -Uri "$BackendUrl/physicians/$($physician.Npi)/patients" -TimeoutSec 20
+      if ($panel.count -gt 0) {
+        if ($physician.Name -eq "Ethan") { $ethanPanelReady = $true }
+        if ($physician.Name -eq "Lianne") { $liannePanelReady = $true }
+        Write-Pass "$($physician.Name) authorized synthetic patient panel is ready."
+      } else {
+        Write-Fail "$($physician.Name) authorized synthetic patient panel is empty."
+      }
+    } catch {
+      Write-Fail "$($physician.Name) authorized synthetic patient panel could not be verified."
+    }
   }
 
   try {
@@ -169,4 +208,18 @@ if ($script:failureCount -gt 0) {
   exit 1
 }
 
-Write-Host "Lamina is ready for the hackathon demo." -ForegroundColor Green
+$ethanStatus = $databaseResult.demo_agent_statuses."agent-9000000999".ToUpper()
+$lianneStatus = $databaseResult.demo_agent_statuses."agent-9000001000".ToUpper()
+Write-Host ""
+Write-Host "LAMINA DEMO" -ForegroundColor Cyan
+Write-Host "Application DB        READY"
+Write-Host "NPPES directory       READY · $($databaseResult.nppes_count) physicians"
+Write-Host "Ethan                 $ethanStatus"
+Write-Host "Lianne                $lianneStatus"
+Write-Host "Medplum               $(if ($medplumReady) { 'CONNECTED' } else { 'UNAVAILABLE' })"
+Write-Host "Ethan patient panel   $(if ($ethanPanelReady) { 'READY' } else { 'UNAVAILABLE' })"
+Write-Host "Lianne patient panel  $(if ($liannePanelReady) { 'READY' } else { 'UNAVAILABLE' })"
+Write-Host "Published posts       $($databaseResult.published_posts)"
+Write-Host "Pending responses     $($databaseResult.pending_responses)"
+Write-Host ""
+Write-Host "READY TO RECORD" -ForegroundColor Green

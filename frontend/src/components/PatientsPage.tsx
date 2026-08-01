@@ -6,39 +6,42 @@ import {
   getForumPost,
   getMyPatients,
   getPatientCaseContext,
-  getReviewInbox,
   monitorForumPost,
   type AgentDetails,
   type ForumPost,
-  type ForumResponse,
   type MonitoringResult,
   type PatientCaseContext,
   type PatientSummary,
 } from '../api/client'
-import { demoSession } from '../session'
+import {
+  ASK_LAMINA_UNSUPPORTED,
+  isNetworkQuestionRequest,
+  isReferralRequest,
+} from '../askLamina'
 import { displayError } from '../utils'
+import { AskLaminaComposer } from './AskLaminaComposer'
 import { ForumPostView } from './ForumPostView'
 import { Badge, EmptyState, ErrorBanner, PageLoading, PrimaryButton } from './ui'
 
-const SELECTED_PATIENT_KEY = 'lamina.selectedPatientRef'
-const postStorageKey = (patientRef: string) => `lamina.patientPost.${patientRef}`
+const selectedPatientKey = (physicianNpi: string) =>
+  `lamina.selectedPatientRef.${physicianNpi}`
+const postStorageKey = (physicianNpi: string, patientRef: string) =>
+  `lamina.patientPost.${physicianNpi}.${patientRef}`
 
 type PendingAction = 'patients' | 'case' | 'generating' | 'publishing' | 'monitoring' | null
 
 function ClinicalList({ title, items }: { title: string; items: string[] }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4">
-      <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+    <section className="clinical-context-card">
+      <h3 className="eyebrow text-[var(--clinical)]">{title}</h3>
       {items.length ? (
-        <ul className="mt-2 space-y-2 text-sm leading-relaxed text-slate-600">
+        <ul className="mt-3 divide-y divide-[var(--border)] text-sm leading-relaxed text-[var(--text-primary)]">
           {items.map((item) => (
-            <li key={item} className="border-l-2 border-indigo-100 pl-3">
-              {item}
-            </li>
+            <li key={item} className="py-2.5">{item}</li>
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-sm text-slate-400">No bounded facts returned.</p>
+        <p className="secondary-copy mt-3">No bounded facts returned.</p>
       )}
     </section>
   )
@@ -46,22 +49,20 @@ function ClinicalList({ title, items }: { title: string; items: string[] }) {
 
 export function PatientsPage({
   physician,
+  organizationName,
   onOpenNetwork,
-  onOpenReviews,
 }: {
   physician: AgentDetails
+  organizationName: string | null
   onOpenNetwork: (postId: string) => void
-  onOpenReviews: (postId: string) => void
 }) {
   const [patients, setPatients] = useState<PatientSummary[]>([])
   const [selectedRef, setSelectedRef] = useState<string | null>(() =>
-    window.localStorage.getItem(SELECTED_PATIENT_KEY),
+    window.localStorage.getItem(selectedPatientKey(physician.physician_npi)),
   )
   const [caseContext, setCaseContext] = useState<PatientCaseContext | null>(null)
   const [post, setPost] = useState<ForumPost | null>(null)
-  const [specialistDraft, setSpecialistDraft] = useState<ForumResponse | null>(null)
   const [monitoringResults, setMonitoringResults] = useState<MonitoringResult[]>([])
-  const [guidance, setGuidance] = useState('')
   const [search, setSearch] = useState('')
   const [pending, setPending] = useState<PendingAction>('patients')
   const [error, setError] = useState<string | null>(null)
@@ -70,15 +71,13 @@ export function PatientsPage({
     async (patientRef: string) => {
       setPending('case')
       setError(null)
-      setSpecialistDraft(null)
       setMonitoringResults([])
       try {
-        const [context, specialistInbox] = await Promise.all([
-          getPatientCaseContext(physician.physician_npi, patientRef),
-          getReviewInbox(demoSession.specialistReviewer.npi),
-        ])
+        const context = await getPatientCaseContext(physician.physician_npi, patientRef)
         setCaseContext(context)
-        const storedPostId = window.localStorage.getItem(postStorageKey(patientRef))
+        const storedPostId = window.localStorage.getItem(
+          postStorageKey(physician.physician_npi, patientRef),
+        )
         if (!storedPostId) {
           setPost(null)
           return
@@ -86,12 +85,11 @@ export function PatientsPage({
         try {
           const storedPost = await getForumPost(storedPostId, physician.physician_npi)
           setPost(storedPost)
-          setSpecialistDraft(
-            specialistInbox.response_drafts.find((item) => item.post_id === storedPost.id) ?? null,
-          )
         } catch (loadError) {
           if (loadError instanceof ApiError && loadError.status === 404) {
-            window.localStorage.removeItem(postStorageKey(patientRef))
+            window.localStorage.removeItem(
+              postStorageKey(physician.physician_npi, patientRef),
+            )
             setPost(null)
           } else {
             throw loadError
@@ -117,7 +115,7 @@ export function PatientsPage({
       if (selectedRef && result.some((patient) => patient.patient_ref === selectedRef)) {
         await loadPatient(selectedRef)
       } else if (selectedRef) {
-        window.localStorage.removeItem(SELECTED_PATIENT_KEY)
+        window.localStorage.removeItem(selectedPatientKey(physician.physician_npi))
         setSelectedRef(null)
       }
     } catch (loadError) {
@@ -143,7 +141,7 @@ export function PatientsPage({
   }, [patients, search])
 
   const selectPatient = (patientRef: string) => {
-    window.localStorage.setItem(SELECTED_PATIENT_KEY, patientRef)
+    window.localStorage.setItem(selectedPatientKey(physician.physician_npi), patientRef)
     setSelectedRef(patientRef)
   }
 
@@ -160,19 +158,33 @@ export function PatientsPage({
     }
   }
 
-  const generate = () =>
-    run('generating', async () => {
-      if (!selectedRef || !guidance.trim()) return
+  const generate = async (request: string): Promise<string> => {
+    if (isReferralRequest(request) || !isNetworkQuestionRequest(request)) {
+      return ASK_LAMINA_UNSUPPORTED
+    }
+    if (!selectedRef || pending) throw new Error('The patient context is not ready yet.')
+    setPending('generating')
+    setError(null)
+    try {
       const generated = await generatePatientForumPost(
         physician.physician_npi,
         selectedRef,
-        guidance,
+        request,
       )
-      window.localStorage.setItem(postStorageKey(selectedRef), generated.id)
+      window.localStorage.setItem(
+        postStorageKey(physician.physician_npi, selectedRef),
+        generated.id,
+      )
       setPost(generated)
-      setSpecialistDraft(null)
       setMonitoringResults([])
-    })
+      return 'Network question ready for your review. It has not been published.'
+    } catch (generationError) {
+      setError(displayError(generationError))
+      throw generationError
+    } finally {
+      setPending(null)
+    }
+  }
 
   const approve = () =>
     run('publishing', async () => {
@@ -185,19 +197,12 @@ export function PatientsPage({
       if (!post) return
       const result = await monitorForumPost(post.id)
       setMonitoringResults(result.results)
-      const [thread, inbox] = await Promise.all([
-        getForumPost(post.id, physician.physician_npi),
-        getReviewInbox(demoSession.specialistReviewer.npi),
-      ])
-      setPost(thread)
-      setSpecialistDraft(
-        inbox.response_drafts.find((response) => response.post_id === post.id) ?? null,
-      )
+      setPost(await getForumPost(post.id, physician.physician_npi))
     })
 
   if (pending === 'patients' && patients.length === 0) {
     return (
-      <div className="mx-auto max-w-5xl px-6 py-8">
+      <div className="page-shell">
         <PageLoading>Loading authorized patients...</PageLoading>
       </div>
     )
@@ -205,27 +210,31 @@ export function PatientsPage({
 
   if (!selectedRef) {
     return (
-      <div className="mx-auto max-w-5xl px-6 py-8 pb-24">
-        <div>
-          <div className="text-sm font-semibold text-indigo-600">Good afternoon</div>
-          <h1 className="mt-1 text-3xl font-bold text-slate-900">
-            {physician.physician.display_name}
-          </h1>
-          <p className="mt-1 text-slate-500">{physician.physician.primary_specialty}</p>
-        </div>
-
-        <div className="mt-8 flex flex-wrap items-end gap-4">
+      <div className="page-shell">
+        <header className="page-hero patient-page-hero">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">My Patients</h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <div className="eyebrow">Physician workspace</div>
+            <h1 className="page-title mt-1">My Patients</h1>
+            <p className="secondary-copy mt-2">
+              Authorized synthetic cases for {physician.physician.display_name}
+              {organizationName ? ` · ${organizationName}` : ''}
+            </p>
+          </div>
+          <Badge tone="clinical">Medplum synchronized</Badge>
+        </header>
+
+        <div className="mt-7 flex flex-wrap items-end gap-4">
+          <div>
+            <h2 className="section-title">Authorized patient panel</h2>
+            <p className="secondary-copy mt-1">
               Your authorized synthetic Medplum panel. No raw FHIR resources are shown.
             </p>
           </div>
-          <Badge tone="emerald">Synthetic demo data</Badge>
+          <Badge tone="success">Synthetic demo data</Badge>
           <button
             type="button"
             onClick={() => void loadPatients()}
-            className="ml-auto text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+            className="text-action ml-auto"
           >
             Refresh
           </button>
@@ -237,26 +246,29 @@ export function PatientsPage({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search patients returned by Medplum"
-          className="mt-5 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+          className="input-control mt-5"
         />
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="mt-5 grid gap-4">
           {visiblePatients.map((patient) => (
-            <article key={patient.patient_ref} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900">{patient.display_name}</h3>
-                {patient.synthetic && <Badge tone="emerald">Synthetic</Badge>}
+            <article key={patient.patient_ref} className="patient-card">
+              <div className="patient-monogram">SP</div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="physician-name text-xl font-bold">{patient.display_name}</h3>
+                  {patient.synthetic && <Badge tone="success">Synthetic</Badge>}
+                </div>
+                <div className="metadata mt-1">Age band {patient.age_band} · Medplum case</div>
+                {patient.summary && (
+                  <p className="secondary-copy mt-1 text-[var(--text-primary)]">{patient.summary}</p>
+                )}
               </div>
-              <div className="mt-2 text-sm font-semibold text-slate-600">Age {patient.age_band}</div>
-              {patient.summary && (
-                <p className="mt-2 text-sm leading-relaxed text-slate-500">{patient.summary}</p>
-              )}
               <button
                 type="button"
                 onClick={() => selectPatient(patient.patient_ref)}
-                className="mt-4 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                className="button-secondary patient-open-button"
               >
-                View patient
+                Open patient
               </button>
             </article>
           ))}
@@ -275,17 +287,17 @@ export function PatientsPage({
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8 pb-24">
+    <div className="page-shell">
       <button
         type="button"
         onClick={() => {
-          window.localStorage.removeItem(SELECTED_PATIENT_KEY)
+          window.localStorage.removeItem(selectedPatientKey(physician.physician_npi))
           setSelectedRef(null)
           setCaseContext(null)
           setPost(null)
           setError(null)
         }}
-        className="text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+        className="text-action"
       >
         Back to My Patients
       </button>
@@ -302,16 +314,19 @@ export function PatientsPage({
         </div>
       ) : (
         <>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+          <header className="page-hero mt-5">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">{caseContext.display_name}</h1>
-              <p className="mt-1 text-sm text-slate-500">Age {caseContext.age_band}</p>
+              <div className="eyebrow">Patient chart summary</div>
+              <h1 className="page-title mt-1">{caseContext.display_name}</h1>
+              <p className="secondary-copy mt-2">Age {caseContext.age_band}</p>
             </div>
-            <Badge tone="emerald">Synthetic demo data</Badge>
-            <Badge tone="indigo">Source: Medplum</Badge>
-          </div>
+            <div className="ml-auto flex flex-wrap gap-2">
+              <Badge tone="success">Synthetic demo data</Badge>
+              <Badge tone="clinical">Medplum synchronized</Badge>
+            </div>
+          </header>
 
-          <div className="mt-5 grid gap-4 lg:grid-cols-3">
+          <div className="mt-6 grid gap-4 lg:grid-cols-3">
             <ClinicalList
               title="Conditions"
               items={caseContext.conditions.map(
@@ -332,43 +347,30 @@ export function PatientsPage({
             />
           </div>
 
-          {!post && (
-            <section className="mt-6 rounded-2xl border border-indigo-100 bg-indigo-50 p-5">
-              <h2 className="text-lg font-bold text-slate-900">Ask Lamina</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Ask the physician network about this bounded case. Lamina will create a draft for
-                your review; it will not publish automatically.
-              </p>
-              <label htmlFor="physician-guidance" className="mt-4 block text-sm font-semibold text-slate-700">
-                What would you like to ask the network?
-              </label>
-              <textarea
-                id="physician-guidance"
-                rows={4}
-                value={guidance}
-                onChange={(event) => setGuidance(event.target.value)}
-                placeholder="I haven't seen this pattern before. Has anyone seen something similar?"
-                className="mt-2 w-full rounded-2xl border border-indigo-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-              />
-              <div className="mt-3">
-                <PrimaryButton disabled={pending === 'generating' || !guidance.trim()} onClick={generate}>
-                  {pending === 'generating' ? 'Drafting question...' : 'Generate network question'}
-                </PrimaryButton>
-              </div>
-            </section>
-          )}
+          <div className="mt-7">
+            <AskLaminaComposer
+              contextLabel={`${physician.physician.display_name} · ${caseContext.display_name}`}
+              placeholder="Ask about this patient or your physician network..."
+              processingLabel="Preparing a network question..."
+              suggestions={[
+                'Draft a de-identified network question',
+                'Ask the network about medication tolerance',
+              ]}
+              onSubmit={generate}
+            />
+          </div>
 
           {post && (
             <div className="mt-6 space-y-4">
               <ForumPostView post={post} />
               {post.status === 'awaiting_physician_approval' && (
-                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <div className="surface flex flex-wrap items-center gap-3 border-l-4 border-l-[var(--warning)] px-4 py-4">
                   <div>
-                    <div className="font-semibold text-amber-900">Physician review required</div>
-                    <div className="text-sm text-amber-800">Approval publishes this exact backend draft.</div>
+                    <div className="font-semibold text-[var(--text-primary)]">Physician review required</div>
+                    <div className="secondary-copy">Approval publishes this exact backend draft.</div>
                   </div>
                   <div className="ml-auto">
-                    <PrimaryButton tone="emerald" disabled={pending === 'publishing'} onClick={approve}>
+                    <PrimaryButton tone="approve" disabled={pending === 'publishing'} onClick={approve}>
                       {pending === 'publishing' ? 'Publishing...' : 'Approve and publish'}
                     </PrimaryButton>
                   </div>
@@ -376,11 +378,11 @@ export function PatientsPage({
               )}
 
               {post.status === 'published' && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <section className="surface px-5 py-5">
                   <div className="flex flex-wrap items-center gap-3">
                     <div>
-                      <h2 className="font-bold text-slate-900">Grounded physician-agent monitoring</h2>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <h2 className="section-title text-xl">Grounded physician monitoring</h2>
+                      <p className="secondary-copy mt-1">
                         Search authorized specialist experience through the existing Agents SDK workflow.
                       </p>
                     </div>
@@ -394,9 +396,9 @@ export function PatientsPage({
                   </div>
 
                   {monitoringResults.length > 0 && (
-                    <div className="mt-4 space-y-2">
+                    <div className="mt-4 divide-y divide-[var(--border)]">
                       {monitoringResults.map((result) => (
-                        <div key={result.monitoring_run_id} className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        <div key={result.monitoring_run_id} className="px-1 py-3 text-sm text-[var(--text-secondary)]">
                           <strong>{result.physician_name}</strong> · {result.outcome.replaceAll('_', ' ')} ·{' '}
                           {result.matched_case_count} matched case
                           {result.matched_case_count === 1 ? '' : 's'}
@@ -405,23 +407,21 @@ export function PatientsPage({
                     </div>
                   )}
 
-                  {specialistDraft && (
-                    <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                  {monitoringResults.some((result) => result.outcome === 'draft_created') && (
+                    <div className="mt-5 border-l-2 border-l-[var(--clinical)] bg-[#f2f0eb] px-5 py-4">
                       <div className="flex flex-wrap gap-2">
-                        <Badge tone="indigo">AI drafted</Badge>
-                        <Badge tone="emerald">Grounded in Medplum</Badge>
-                        <Badge>{specialistDraft.provenance.grounding.matched_case_count} similar case found</Badge>
-                        <Badge tone="amber">Awaiting physician approval</Badge>
+                        <Badge tone="clinical">Grounded in Medplum</Badge>
+                        <Badge tone="warning">Awaiting physician approval</Badge>
                       </div>
-                      <h3 className="mt-3 font-bold text-slate-900">{specialistDraft.headline}</h3>
-                      <p className="mt-1 text-sm leading-relaxed text-slate-700">{specialistDraft.content}</p>
-                      <button
-                        type="button"
-                        onClick={() => onOpenReviews(post.id)}
-                        className="mt-3 text-sm font-semibold text-indigo-700 hover:text-indigo-900"
-                      >
-                        Open specialist review
-                      </button>
+                      <h3 className="publication-title mt-4">Relevant specialist experience found</h3>
+                      {monitoringResults
+                        .filter((result) => result.outcome === 'draft_created')
+                        .map((result) => (
+                          <p key={result.monitoring_run_id} className="secondary-copy mt-2">
+                            {result.physician_name} · {result.matched_case_count} similar authorized case
+                            {result.matched_case_count === 1 ? '' : 's'} · Response awaiting physician review
+                          </p>
+                        ))}
                     </div>
                   )}
 
@@ -429,7 +429,7 @@ export function PatientsPage({
                     <button
                       type="button"
                       onClick={() => onOpenNetwork(post.id)}
-                      className="mt-4 text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+                      className="text-action mt-4"
                     >
                       Open published network thread
                     </button>

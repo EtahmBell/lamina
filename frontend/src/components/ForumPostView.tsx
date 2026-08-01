@@ -1,22 +1,28 @@
 import type { ForumPost, ForumResponse } from '../api/client'
 import { formatTimestamp } from '../utils'
 import { Badge } from './ui'
+import { PhysicianAvatar } from './PhysicianAvatar'
 
 function ResponseView({ response }: { response: ForumResponse }) {
   const grounding = response.provenance.grounding
   return (
-    <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="flex flex-wrap items-start gap-2">
+    <article className="response-card">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <PhysicianAvatar
+          npi={response.author.physician_npi}
+          name={response.author.physician_name}
+          size="small"
+        />
         <div>
-          <div className="font-semibold text-slate-900">{response.author.physician_name}</div>
-          <div className="text-xs text-slate-500">{response.author.verified_specialty}</div>
+          <div className="physician-name text-lg font-bold">{response.author.physician_name}</div>
+          <div className="metadata mt-0.5">{response.author.verified_specialty}</div>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
           {response.provenance.physician_approved && (
-            <Badge tone="emerald">Physician approved</Badge>
+            <Badge tone="success">Physician approved</Badge>
           )}
           {grounding.source_system === 'medplum' && (
-            <Badge tone="indigo">Grounded in Medplum</Badge>
+            <Badge tone="clinical">Grounded in Medplum</Badge>
           )}
           {grounding.matched_case_count > 0 && (
             <Badge>
@@ -26,67 +32,66 @@ function ResponseView({ response }: { response: ForumResponse }) {
           )}
         </div>
       </div>
-      <h4 className="mt-3 font-bold text-slate-900">{response.headline}</h4>
-      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-        {response.content}
-      </p>
+      <h4 className="publication-title mt-4">{response.headline}</h4>
+      <p className="body-copy mt-2 whitespace-pre-wrap">{response.content}</p>
     </article>
   )
 }
 
 export function ForumPostView({ post }: { post: ForumPost }) {
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start gap-2">
-        <div>
-          <div className="font-semibold text-slate-900">{post.author.physician_name}</div>
-          <div className="text-sm text-slate-500">
-            {post.author.verified_specialty}
-            {post.author.organization ? ` · ${post.author.organization}` : ''}
+    <article className="forum-post-document">
+      <header className="border-b border-[var(--border)] pb-5">
+        <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
+          <PhysicianAvatar
+            npi={post.author.physician_npi}
+            name={post.author.physician_name}
+            size="medium"
+          />
+          <div>
+            <div className="physician-name text-xl font-bold">{post.author.physician_name}</div>
+            <div className="secondary-copy mt-0.5">
+              {post.author.verified_specialty}
+              {post.author.organization ? ` · ${post.author.organization}` : ''}
+            </div>
+          </div>
+          <div className="ml-auto flex flex-wrap justify-end gap-2">
+            {post.provenance.draft_origin === 'agent_generated' && (
+              <Badge>Draft prepared</Badge>
+            )}
+            {post.provenance.grounding?.source_system === 'medplum' && (
+              <Badge tone="clinical">Grounded in Medplum</Badge>
+            )}
+            {post.provenance.physician_approved ? (
+              <Badge tone="success">Physician approved</Badge>
+            ) : (
+              <Badge tone="warning">Awaiting physician approval</Badge>
+            )}
           </div>
         </div>
-        <div className="ml-auto flex flex-wrap justify-end gap-2">
-          {post.provenance.draft_origin === 'agent_generated' && (
-            <Badge tone="indigo">AI drafted</Badge>
-          )}
-          {post.provenance.grounding?.source_system === 'medplum' && (
-            <Badge tone="indigo">Grounded in Medplum</Badge>
-          )}
-          {post.provenance.physician_approved ? (
-            <Badge tone="emerald">Physician approved</Badge>
-          ) : (
-            <Badge tone="amber">Awaiting physician approval</Badge>
-          )}
-        </div>
-      </div>
+      </header>
 
-      <h3 className="mt-4 text-xl font-bold text-slate-900">{post.title}</h3>
-      <p className="mt-2 font-medium leading-relaxed text-slate-800">
-        {post.clinical_question}
-      </p>
-      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-600">
-        {post.context_summary}
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {post.specialty_tags.map((tag) => (
-          <Badge key={tag}>{tag}</Badge>
-        ))}
+      <h3 className="publication-title mt-6 text-[1.45rem]">{post.title}</h3>
+      <p className="body-copy mt-3 font-semibold">{post.clinical_question}</p>
+      <p className="body-copy mt-3 text-[var(--text-secondary)]">{post.context_summary}</p>
+      <div className="mt-5 flex flex-wrap gap-2">
+        {post.specialty_tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}
       </div>
-      <div className="mt-3 text-xs text-slate-400">
+      <div className="metadata mt-4">
         {post.status === 'published' ? 'Published' : 'Drafted'} {formatTimestamp(
           post.published_at ?? post.created_at,
         )}
       </div>
 
       {post.responses.length > 0 && (
-        <div className="mt-5 space-y-3 border-t border-slate-100 pt-5">
-          <h4 className="text-sm font-bold tracking-wide text-slate-500 uppercase">
-            Physician responses
-          </h4>
-          {post.responses.map((response) => (
-            <ResponseView key={response.id} response={response} />
-          ))}
-        </div>
+        <section className="section-rule mt-7 pt-6">
+          <h4 className="eyebrow text-[var(--clinical)]">Physician responses</h4>
+          <div className="mt-5 space-y-7">
+            {post.responses.map((response) => (
+              <ResponseView key={response.id} response={response} />
+            ))}
+          </div>
+        </section>
       )}
     </article>
   )
