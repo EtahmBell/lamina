@@ -9,6 +9,7 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api.medplum import MedplumError, MedplumService
@@ -44,6 +45,7 @@ from api.organization_medplum import (
     get_demo_medplum_service,
     get_medplum_connection_for_organization,
     get_medplum_service_for_agent,
+    get_practitioner_id_for_agent,
     record_medplum_connection_test,
     resolve_medplum_service_for_organization,
     safe_medplum_connection_payload,
@@ -64,6 +66,25 @@ app = FastAPI(
     title="Lamina Physician Directory API",
     version="0.2.0",
     default_response_class=Utf8JSONResponse,
+)
+DEFAULT_FRONTEND_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://frontend-nu-weld-79.vercel.app",
+)
+configured_cors_origins = os.getenv("LAMINA_CORS_ORIGINS", "")
+additional_cors_origins = [
+    origin.strip()
+    for origin in configured_cors_origins.split(",")
+    if origin.strip()
+]
+cors_origins = list(dict.fromkeys((*DEFAULT_FRONTEND_ORIGINS, *additional_cors_origins)))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type"],
 )
 
 
@@ -743,7 +764,7 @@ def approved_discussion_payload(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "database": str(DB_PATH)}
+    return {"status": "ok"}
 
 
 @app.get("/organizations")
@@ -985,6 +1006,41 @@ def verify_demo_claim(claim_id: str) -> dict[str, object]:
 def get_agent(agent_id: str) -> dict[str, object]:
     with connect() as connection:
         return agent_response(connection, agent_id)
+
+
+@app.get("/agents/{agent_id}/medplum/cases")
+async def get_agent_medplum_cases(
+    agent_id: str,
+    injected_service: Annotated[MedplumService | None, Depends(get_medplum_service)],
+) -> dict[str, object]:
+    try:
+        with connect() as connection:
+            agent = get_agent_row(connection, agent_id)
+            if agent["source"].casefold() != "synthetic":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Medplum case discovery is limited to synthetic demo physicians",
+                )
+            resolved = get_medplum_service_for_agent(
+                connection, agent_id, injected_service
+            )
+            practitioner_id = get_practitioner_id_for_agent(
+                connection, resolved, agent_id
+            )
+        cases = await resolved.service.get_authorized_panel_cases(practitioner_id)
+    except MedplumError as error:
+        raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
+    return {
+        "agent_id": agent_id,
+        "organization_id": resolved.organization_id,
+        "source_system": "medplum",
+        "cases": [
+            case.model_dump(exclude={"source_resource_refs"}) for case in cases
+        ],
+        "count": len(cases),
+    }
 
 
 @app.put("/agents/{agent_id}/configuration")

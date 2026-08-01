@@ -3,6 +3,7 @@ import { Avatar } from './Avatar'
 import type { User } from '../data/mock'
 
 export type NavKey =
+  | 'demo'
   | 'home'
   | 'publications'
   | 'agent-setup'
@@ -18,6 +19,7 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  { key: 'demo', label: 'Clinical Demo', icon: '✦' },
   { key: 'home', label: 'Home', icon: '🏠' },
   { key: 'publications', label: 'Publication Center', icon: '📚' },
   { key: 'agent-setup', label: 'Agent Setup', icon: '⚙️' },

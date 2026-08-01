@@ -3,6 +3,70 @@
 This is the frontend integration contract for the current hackathon backend. FastAPI routes and
 Pydantic models are authoritative if this document and code ever diverge.
 
+# Hackathon deployment
+
+The demo uses this intentionally temporary topology:
+
+```text
+https://frontend-nu-weld-79.vercel.app/
+        -> HTTPS Cloudflare Quick Tunnel
+        -> http://127.0.0.1:8001 on Ethan's Windows laptop
+```
+
+The frontend is React 19, TypeScript, and Vite 8 in `frontend/`. Its only production browser
+configuration is:
+
+```text
+VITE_API_BASE_URL=https://your-generated-subdomain.trycloudflare.com
+```
+
+Do not commit or hardcode the generated URL. Vite injects the value at build time, so every change
+to `VITE_API_BASE_URL` requires a Vercel redeploy. OpenAI and Medplum credentials remain only in
+the local backend `.env`; they must never be copied into Vercel or any `VITE_*` variable. The
+tunnel exposes FastAPI HTTP routes, not the SQLite files themselves.
+
+### Manual startup
+
+From the repository root, start the two required processes in separate visible PowerShell windows.
+
+Terminal 1 - local FastAPI:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn api.main:app `
+    --host 127.0.0.1 `
+    --port 8001 `
+    --env-file .env
+```
+
+Terminal 2 - Cloudflare Quick Tunnel:
+
+```powershell
+.\scripts\start-cloudflare-tunnel.ps1
+```
+
+The helper verifies `cloudflared --version`, checks the backend health endpoint, and then runs the
+required visible command:
+
+```powershell
+cloudflared tunnel --url http://127.0.0.1:8001
+```
+
+Then complete these manual steps:
+
+1. Copy the generated `https://*.trycloudflare.com` URL from Terminal 2.
+2. Open the Vercel project settings for `https://frontend-nu-weld-79.vercel.app/`.
+3. Set the Production environment variable `VITE_API_BASE_URL` to that URL, with no localhost
+   fallback and no secret values.
+4. Redeploy the frontend so Vite embeds the new value.
+5. Keep both FastAPI and cloudflared running for the entire demo.
+6. Run `.\scripts\verify-demo-ready.ps1` again and confirm all required checks pass.
+
+`127.0.0.1` in a remote visitor's browser refers to that visitor's device, not Ethan's laptop.
+The deployed frontend must therefore use the public Cloudflare HTTPS URL. Closing cloudflared
+invalidates the Quick Tunnel endpoint; the next tunnel URL must be copied to Vercel and followed by
+another redeploy. This is a Quick Tunnel only: it requires no Cloudflare account, DNS changes,
+permanent tunnel credentials, or Windows service.
+
 ## 1. What Lamina is
 
 Lamina is a physician-supervised agent network. Medplum is the clinical ground-truth/FHIR layer;
@@ -36,6 +100,23 @@ frontend/browser -> Lamina FastAPI -> OpenAI / Medplum
 
 The browser must never call OpenAI or Medplum directly. Never put an OpenAI key, Medplum client
 secret, or Medplum bearer token in frontend code or a browser-bundled environment variable.
+
+### Local frontend
+
+The merged frontend is React 19 with TypeScript, Vite 8, and Tailwind CSS 4. From `frontend/`:
+
+```powershell
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+- Frontend dev URL: `http://localhost:5173`
+- Browser-safe configuration: `VITE_API_BASE_URL=http://127.0.0.1:8001`
+- Central API module: `frontend/src/api/client.ts`
+- Integrated screen: **Clinical Demo** (the initial navigation selection)
+
+No OpenAI or Medplum credential belongs in a `VITE_*` variable.
 
 ## 3. Demo identities
 
@@ -78,7 +159,9 @@ agent; retrieved cases from her authorized Medplum panel provide the clinical gr
 - Private grounding details and public grounding badge.
 - Export-to-Medplum action and result.
 
-No frontend framework is prescribed by this repository.
+The implemented workflow is in `frontend/src/components/DemoWorkflowPage.tsx`. The pre-existing
+Home, Publication Center, Agent Setup, Agent Connections, assistant, profile, and signup prototypes
+remain local mock experiences and are intentionally separate from the backend-backed Clinical Demo.
 
 ## 6. Required UI labels and states
 
@@ -108,6 +191,7 @@ standard `detail` array. Error responses otherwise use `{ "detail": "..." }`.
 |---|---|---|---|
 | `GET /physicians/search?q=...&state=CA&limit=10` | Search directory. `q` is required (2–120 chars); `state` and `limit` are optional. | `results`, `count`; result rows include physician and reserved-agent fields. | `422`; `503` if DB is unavailable. |
 | `GET /agents/{agent_id}` | Load lifecycle, physician, configuration, and permissions. | `id`, `physician_npi`, `status`, `physician`, `claim`, `configuration`, `effective_permissions`, `activation_readiness`. | `404` agent; `503` DB. |
+| `GET /agents/{agent_id}/medplum/cases` | Discover bounded cases in a synthetic agent's organization-resolved Practitioner panel. | `agent_id`, `organization_id`, `source_system`, `cases`, `count`; source FHIR refs are omitted. | `403` non-synthetic agent; `404/409` scope mapping; `502/503` Medplum. |
 | `GET /forum/posts?status=published&specialty=...&author_physician_npi=...&limit=20&offset=0` | Public feed; only `published` or `closed` are allowed. | `posts`, `count`, `limit`, `offset`. | `403` for draft/private status; `422` pagination. |
 | `GET /forum/posts/{post_id}` | Public thread. A synthetic owner may privately fetch their draft with `?viewer_physician_npi=...`. | Full forum post including `responses`. | `404` missing or private to viewer. |
 | `GET /physicians/{npi}/review-inbox` | Synthetic physician's private draft lists. No request body. | `physician_npi`, `counts`, `post_drafts`, `response_drafts`. | `404` physician; `403` non-synthetic physician. |
@@ -148,12 +232,11 @@ Extra fields are rejected.
 
 ## 8. Example frontend requests
 
-Obtain the environment-specific Ethan Patient ID from the seed command; do not hardcode an ID from
-another Medplum project.
+The implemented API client discovers Ethan's environment-specific Patient ID from his authorized
+panel. It does not hardcode a Patient or resource ID.
 
 ```js
 const API_BASE = "http://127.0.0.1:8001";
-const ethanPatientId = "<Ethan Patient ID printed by the seed script>";
 
 async function api(path, init = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -168,10 +251,10 @@ async function api(path, init = {}) {
   return payload;
 }
 
-// 1. Fetch Ethan's bounded internal case context.
-const ethanCase = await api(
-  `/medplum/patients/${encodeURIComponent(ethanPatientId)}/case-context`,
-);
+// 1. Discover Ethan's bounded authorized cases without source FHIR references.
+const panel = await api("/agents/agent-9000000999/medplum/cases");
+const ethanCase = panel.cases[0];
+const ethanPatientId = ethanCase.patient_id;
 
 // 2. Generate Ethan's post draft.
 const postDraft = await api(
@@ -288,8 +371,6 @@ do return provenance identifiers; do not reuse their JSON in a public component.
   render its response.
 - Do not treat NPPES directory presence as Lamina participation or verification.
 
-## 12. CORS
-
 ## Organization / Medplum integration
 
 Lamina organizations own Medplum connections; physicians participate through organization
@@ -316,12 +397,13 @@ compatibility and resolves internally through the demo organization.
 
 ## 12. CORS
 
-The FastAPI application currently has **no CORS middleware and no allowed-origin list**. Therefore
-`http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:5173`, and
-`http://127.0.0.1:5173` are not currently supported for cross-origin browser calls.
-
-Until backend CORS is intentionally configured, use a same-origin frontend/backend setup or a
-frontend development proxy that forwards `/api` to `http://127.0.0.1:8001`.
+FastAPI explicitly allows the Vite development origins `http://localhost:5173` and
+`http://127.0.0.1:5173`, plus the deployed origin
+`https://frontend-nu-weld-79.vercel.app`, without cross-origin credentials. Additional trusted
+frontend origins can be appended with the server-side, comma-separated `LAMINA_CORS_ORIGINS`
+environment variable. The built-in local and deployed origins remain available. No wildcard
+origin is enabled. The backend tunnel URL is an API destination, not a browser origin, and does
+not need to be added to this CORS list.
 
 ## 13. Demo data setup
 
@@ -340,6 +422,12 @@ not run it as a reset against a database whose local demo workflow state must be
 
 # Idempotent synthetic Medplum practitioner/patient panel seed; loads .env
 .\scripts\seed-medplum-demo-patient.ps1
+
+# Frontend dependencies and local server
+Set-Location .\frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
 
 # Readiness checks / guarded walkthroughs
 .\scripts\test-medplum-connection.ps1
@@ -372,7 +460,7 @@ script.
 
 - Deepgram voice capture/transcription. The existing voice-drafting permission is configuration,
   not a transcription implementation.
-- A polished frontend.
+- Production authentication and a non-demo organization administration UI.
 - Weekly/monthly network intelligence report generation. Preferences exist; generation does not.
 - Background, scheduled, or event-driven monitoring. Monitoring is manually triggered by POST.
 - Production authentication/authorization. Demo ownership checks use supplied NPIs; there is no
@@ -397,8 +485,8 @@ script.
 
 ## 17. Integration checks / possible blockers
 
-- **CORS blocker:** no browser origins are currently allowed; use a same-origin dev proxy or request
-  an explicit backend CORS change before direct calls from ports 3000/5173.
+- **Frontend mocks outside Clinical Demo:** the legacy feed, Publication Center, Agent Setup,
+  Agent Connections, assistant, profile, and signup views still use teammate-provided local data.
 - **Port documentation mismatch:** older general README sections use port `8000`; the current
   Medplum/monitoring scripts and this handoff use `8001`.
 - **Model-only route:** `POST /forum/posts/{post_id}/responses/generate` still creates an ungrounded

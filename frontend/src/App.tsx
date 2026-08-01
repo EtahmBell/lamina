@@ -9,6 +9,7 @@ import { EditDraftModal, stripHtml } from './components/EditDraftModal'
 import { AgentConnectionsPage } from './components/AgentConnectionsPage'
 import { EditProfileModal } from './components/EditProfileModal'
 import { SignupPage } from './components/SignupPage'
+import { DemoWorkflowPage } from './components/DemoWorkflowPage'
 import { agents, currentUser, posts as initialPosts, type Post, type User } from './data/mock'
 
 type FeedFilter = 'all' | 'discussion' | 'article'
@@ -34,7 +35,7 @@ const userAgent = {
 let publishCounter = 1
 
 export default function App() {
-  const [nav, setNav] = useState<NavKey>('home')
+  const [nav, setNav] = useState<NavKey>('demo')
   const [posts, setPosts] = useState<Post[]>(initialPosts)
   const [filter, setFilter] = useState<FeedFilter>('all')
   const [search, setSearch] = useState('')
@@ -184,7 +185,9 @@ export default function App() {
       />
 
       <main className="scrollbar-thin flex-1 overflow-y-auto">
-        {nav === 'home' ? (
+        {nav === 'demo' ? (
+          <DemoWorkflowPage />
+        ) : nav === 'home' ? (
           <div className="mx-auto max-w-2xl px-6 py-6">
             <div className="relative mb-5">
               <span className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-slate-400">
@@ -260,9 +263,11 @@ export default function App() {
         )}
       </main>
 
-      <div className="hidden lg:block">
-        <AssistantPanel onPublish={publishDraft} />
-      </div>
+      {nav !== 'demo' && (
+        <div className="hidden lg:block">
+          <AssistantPanel onPublish={publishDraft} />
+        </div>
+      )}
 
       {profileOpen && (
         <EditProfileModal

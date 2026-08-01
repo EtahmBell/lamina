@@ -60,6 +60,35 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 This creates five fictional physicians and reserved agent records without downloading public data.
 
+The integrated React/Vite frontend lives in `frontend/`. Start the backend on port 8001, then run:
+
+```powershell
+Set-Location .\frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+Open `http://localhost:5173`. The initial **Clinical Demo** screen uses the centralized
+`VITE_API_BASE_URL` configuration and real Lamina endpoints for organization status, Ethan's
+synthetic Medplum case, generation, approvals, grounded monitoring, Lianne's review inbox, the
+public response, and Medplum export. Other teammate-provided prototype screens remain local mocks.
+
+For the deployed Vercel frontend, set `VITE_API_BASE_URL` to the HTTPS URL of the tunnel forwarding
+to local FastAPI, then redeploy. Never set the deployed value to localhost and never place OpenAI
+or Medplum secrets in Vercel. See `FRONTEND_HANDOFF.md` for the exact local and deployed setup.
+
+For the hackathon, start FastAPI on port 8001 and launch a visible Cloudflare Quick Tunnel:
+
+```powershell
+.\scripts\start-cloudflare-tunnel.ps1
+```
+
+The helper checks `cloudflared` and backend health before running
+`cloudflared tunnel --url http://127.0.0.1:8001`. Use `.\scripts\verify-demo-ready.ps1` for a
+secret-safe readiness audit of the local environment, demo database, provider health, frontend,
+and deployed-origin CORS. This does not create an account-managed tunnel or install a service.
+
 To add the fictional Ethan Bell profile to an existing full NPPES database without rebuilding or
 removing any records, run:
 

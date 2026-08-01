@@ -1,32 +1,52 @@
-# React + TypeScript + Vite
+# Lamina frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19, TypeScript, Vite 8, and Tailwind CSS 4 frontend for the Lamina hackathon demo.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Start FastAPI from the repository root on `http://127.0.0.1:8001`, then:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+Set-Location .\frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Open `http://localhost:5173` and select **Clinical Demo**. The browser calls only Lamina FastAPI.
+OpenAI and Medplum credentials remain server-side.
+
+`VITE_API_BASE_URL` is the single browser API configuration point. Copying `.env.example` creates
+the local `http://127.0.0.1:8001` setting; production builds require an explicit HTTPS value.
+
+## Vercel deployment
+
+Start FastAPI locally on `http://127.0.0.1:8001` and expose it through an HTTPS tunnel. In the
+Vercel project settings, set the Production environment variable:
+
+```text
+VITE_API_BASE_URL=https://your-current-tunnel-host.example
+```
+
+Then redeploy. Vite reads this value at build time. Never use localhost for the deployed value:
+localhost in a remote browser means that visitor's computer. Do not add OpenAI keys, Medplum
+credentials, or other backend secrets to Vercel; they stay in the FastAPI environment.
+
+To verify a production build locally in PowerShell:
+
+```powershell
+$env:VITE_API_BASE_URL = 'https://your-current-tunnel-host.example'
+npm run build
+```
+
+## Checks
+
+```powershell
+npm run lint
+$env:VITE_API_BASE_URL = 'https://your-current-tunnel-host.example'
+npm run build
+```
+
+There is currently no frontend test script. The Home, Publication Center, Agent Setup, Agent
+Connections, assistant, profile, and signup screens are teammate-provided local prototypes. The
+Clinical Demo screen is the backend-integrated workflow.

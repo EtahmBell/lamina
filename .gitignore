@@ -13,6 +13,8 @@ __pycache__/
 
 # Local databases
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 *.sqlite3
 *.db
 

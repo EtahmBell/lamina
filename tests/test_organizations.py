@@ -290,3 +290,45 @@ def test_organization_endpoints_and_connection_test_are_secret_safe(
     assert record[1] is not None
     assert record[2] is None
     assert "environment-secret-marker" not in audit
+
+
+def test_supported_frontend_origins_are_allowed_by_cors(
+    organization_database: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(api_main, "DB_PATH", organization_database)
+    client = TestClient(api_main.app)
+
+    for origin in (
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://frontend-nu-weld-79.vercel.app",
+    ):
+        response = client.options(
+            "/organizations",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+
+    rejected = client.options(
+        "/organizations",
+        headers={
+            "Origin": "https://frontend-nu-weld-79.vercel.app.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert rejected.status_code == 400
+    assert "access-control-allow-origin" not in rejected.headers
+
+
+def test_public_health_does_not_expose_database_path(
+    organization_database: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(api_main, "DB_PATH", organization_database)
+    response = TestClient(api_main.app).get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}

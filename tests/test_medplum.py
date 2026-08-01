@@ -642,6 +642,24 @@ def test_case_context_read_has_safe_system_audit(client):
     assert "Persistent nausea" not in event[1]
 
 
+def test_synthetic_agent_case_discovery_is_bounded_and_identifier_safe(client):
+    http, _ = client
+    override_services(FakeMedplumService())
+
+    response = http.get(f"/agents/{DEMO_AGENT_ID}/medplum/cases")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_id"] == DEMO_AGENT_ID
+    assert payload["organization_id"] == "org-lamina-demo-medical-group"
+    assert payload["source_system"] == "medplum"
+    assert payload["count"] == 2
+    assert payload["cases"][0]["synthetic"] is True
+    assert "source_resource_refs" not in json.dumps(payload)
+    assert "condition-secret-id" not in json.dumps(payload)
+    assert http.get("/agents/agent-1234567890/medplum/cases").status_code == 403
+
+
 def create_generated_post(http):
     response = http.post(
         "/medplum/patients/patient-secret-id/forum-posts/generate",
