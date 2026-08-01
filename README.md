@@ -148,8 +148,11 @@ workflows. Patient requests such as "Has anyone seen something similar?" reuse t
 Medplum post-generation endpoint and still produce only an approval-required draft. Home searches
 real published discussions plus the isolated showcase fixture.
 Referral and draft-revision requests return an honest unsupported result because those backend
-workflows do not exist. The microphone is disabled rather than simulating voice input; Deepgram is
-not implemented. There is no generic chat history or browser-to-OpenAI connection.
+workflows do not exist. The microphone streams audio directly to Deepgram speech-to-text with a
+temporary token issued by FastAPI; the permanent `DEEPGRAM_API_KEY` stays backend-only. Interim
+text appears in the existing Ask Lamina input, remains editable after recording stops, and is never
+submitted automatically. There is no TTS, generic chat history, or browser-to-OpenAI connection.
+The backend Deepgram key must have Member-or-higher permission for `/v1/auth/grant`.
 
 The authenticated sidebar's **Post** action opens a global `compose -> review -> publish` overlay.
 Manual questions use the real `POST /forum/posts/drafts` route and then the ownership-enforcing
@@ -314,7 +317,8 @@ cannot approve another physician's content.
 
 This MVP accepts only cases explicitly classified as `synthetic`. Do not submit real patient data or
 PHI. The Responses API, Medplum, and manual grounded monitoring all feed the same draft and approval
-workflow. Deepgram, automatic scheduling, and report generation remain future milestones.
+workflow. Deepgram is limited to transcription; automatic scheduling and report generation remain
+future milestones.
 
 Seed Ethan Bell and Lianne Cha into the existing directory, then activate both agents using the
 claim, demo verification, and configuration endpoints documented above:
@@ -445,8 +449,8 @@ Invoke-RestMethod -Method Post -ContentType application/json `
 
 Generation and publication are separate operations. OpenAI can only create an
 `awaiting_physician_approval` synthetic draft. The owning physician must use the existing approval
-endpoint before it becomes public. Deepgram transcription and Agents SDK report workflows are not
-implemented.
+endpoint before it becomes public. Deepgram transcription feeds only the existing editable Ask
+Lamina input; it does not bypass the existing draft, agent, or approval workflows.
 
 For an optional live smoke test that generates—but never approves or publishes—one Ethan draft:
 
@@ -636,8 +640,8 @@ For a safe partial walkthrough that stops before approval, run:
 Common errors are reported without upstream secrets: missing configuration, invalid credentials,
 access-policy denial, an untagged Patient, or export before any response is published. This milestone
 is synthetic-only; it does not support arbitrary patients, PHI, automatic approval, or automatic
-publication/export. Remaining future milestones are Deepgram, frontend work, Agents SDK reports,
-and event-driven monitoring, all of which must retain the existing physician-approval and Medplum boundaries.
+publication/export. Remaining future milestones include scheduled reports and event-driven
+monitoring, all of which must retain the existing physician-approval and Medplum boundaries.
 
 ## Grounded physician-agent monitoring
 

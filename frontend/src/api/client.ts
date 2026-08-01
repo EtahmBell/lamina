@@ -241,6 +241,11 @@ export class ApiError extends Error {
   }
 }
 
+export interface DeepgramTemporaryToken {
+  access_token: string
+  expires_in: number
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
@@ -274,6 +279,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getAgent(agentId: string): Promise<AgentDetails> {
   return request(`/agents/${encodeURIComponent(agentId)}`)
+}
+
+export function getDeepgramTemporaryToken(): Promise<DeepgramTemporaryToken> {
+  return request('/integrations/deepgram/token', { method: 'POST' })
 }
 
 export function saveAgentConfiguration(

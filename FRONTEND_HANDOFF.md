@@ -174,9 +174,13 @@ This searches titles, clinical questions, context summaries, and specialty tags 
 records only. It does not call a model or expose drafts. Other screens provide bounded navigation,
 filter, or explanatory actions and return an honest unsupported result when no workflow exists.
 
-The microphone control is disabled with visible explanatory copy. Deepgram/backend transcription
-is not implemented, so the frontend does not request microphone access or fabricate listening and
-transcription states. A future transcript must enter the same patient/network request handler.
+The existing Ask Lamina microphone uses Deepgram only for live speech-to-text. FastAPI exchanges
+the backend-only `DEEPGRAM_API_KEY` for a 30-second token through
+`POST /integrations/deepgram/token`; the permanent key is never returned to or configured in the
+browser. The browser opens `wss://api.deepgram.com/v1/listen` with `nova-3-medical`, `en-US`, smart
+formatting, and interim results. Interim text appears in the existing input, stopping leaves an
+editable final transcript, and voice never submits automatically or creates another agent path.
+The configured Deepgram key must have Member-or-higher permission to call `/v1/auth/grant`.
 
 The patient page posts physician guidance to:
 
@@ -367,7 +371,7 @@ mapping state.
 ## Capabilities not represented
 
 - Production authentication is deferred; the current two-profile selector is explicit demo state.
-- Deepgram voice capture is not implemented, so Ask Lamina is typed only.
+- Deepgram is speech-to-text only; it does not provide TTS or an autonomous voice-agent path.
 - Showcase connections are demo-local browser state only; referral persistence remains unsupported.
 - Post editing is omitted because no safe existing edit endpoint is available.
 - Medplum export remains a backend capability but is not exposed in this simplified primary flow.

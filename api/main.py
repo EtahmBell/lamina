@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from api.deepgram import DeepgramError, issue_deepgram_temporary_token
 from api.medplum import MedplumError, MedplumService
 from api.models import (
     AgentConfigurationInput,
@@ -846,6 +847,25 @@ def approved_discussion_payload(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/integrations/deepgram/token")
+async def create_deepgram_token() -> dict[str, str | int]:
+    try:
+        return await issue_deepgram_temporary_token()
+    except DeepgramError as error:
+        if error.category in {
+            "deepgram_not_configured",
+            "deepgram_invalid_configuration",
+        }:
+            raise HTTPException(
+                status_code=503,
+                detail="Deepgram transcription is not configured",
+            ) from error
+        raise HTTPException(
+            status_code=503,
+            detail="Deepgram transcription is temporarily unavailable",
+        ) from error
 
 
 @app.get("/organizations")

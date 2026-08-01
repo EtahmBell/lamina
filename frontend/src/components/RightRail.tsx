@@ -33,6 +33,7 @@ export function RightRail({
           <strong>{configuration.contextLabel}</strong>
         </div>
         <AskLaminaComposer
+          key={physician.id}
           contextLabel={physician.physician.display_name}
           placeholder={configuration.placeholder}
           processingLabel={configuration.processingLabel}

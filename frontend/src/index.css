@@ -459,9 +459,27 @@ textarea {
   place-items: center;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: #f0ece5;
-  color: #8b877f;
+  background: var(--surface);
+  color: var(--clinical);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.ask-lamina-mic:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.ask-lamina-mic-listening,
+.ask-lamina-mic-transcribing {
+  border-color: rgb(184 92 50 / 45%);
+  background: #f6e8df;
+  color: var(--accent-hover);
+}
+
+.ask-lamina-mic:disabled {
   cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ask-lamina-mic svg {
@@ -472,6 +490,50 @@ textarea {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.7;
+}
+
+.voice-state {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.voice-state > span {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.voice-state strong {
+  color: var(--clinical);
+  font-weight: 600;
+}
+
+.voice-state-listening > span {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgb(184 92 50 / 12%);
+}
+
+.voice-state-transcribing > span {
+  background: var(--warning);
+}
+
+.voice-state-error {
+  color: var(--danger);
+}
+
+.voice-state-error > span {
+  background: var(--danger);
+}
+
+.voice-state-error strong {
+  color: var(--danger);
 }
 
 .page-title {
