@@ -1377,8 +1377,11 @@ def get_forum_post_thread(
 
 
 @app.post("/forum/posts/{post_id}/approve")
-def approve_forum_post(
-    post_id: str, approval: PhysicianApprovalInput
+async def approve_forum_post(
+    post_id: str,
+    approval: PhysicianApprovalInput,
+    injected_medplum: Annotated[MedplumService | None, Depends(get_medplum_service)],
+    injected_runtime: Annotated[MonitoringRuntime | None, Depends(get_monitoring_runtime)],
 ) -> dict[str, object]:
     with connect() as connection:
         post = get_forum_post(connection, post_id)
@@ -1408,7 +1411,22 @@ def approve_forum_post(
             "post_approved",
             {"post_id": post_id},
         )
-        return forum_post_payload(connection, get_forum_post(connection, post_id))
+        payload = forum_post_payload(connection, get_forum_post(connection, post_id))
+        physician = connection.execute(
+            "SELECT source FROM physicians WHERE npi=?",
+            (post["author_physician_npi"],),
+        ).fetchone()
+        should_monitor = (
+            physician["source"].casefold() == "synthetic"
+            and post["case_classification"] == "synthetic"
+            and connection.execute(
+                "SELECT 1 FROM forum_medplum_links WHERE post_id=?", (post_id,)
+            ).fetchone()
+            is not None
+        )
+    if should_monitor:
+        await monitor_forum_post(post_id, injected_medplum, injected_runtime)
+    return payload
 
 
 @app.post("/forum/posts/{post_id}/reject")

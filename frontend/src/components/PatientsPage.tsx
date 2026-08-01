@@ -15,7 +15,9 @@ import {
 } from '../api/client'
 import {
   ASK_LAMINA_UNSUPPORTED,
+  OPEN_PATIENT_FOR_NETWORK_QUESTION,
   isNetworkQuestionRequest,
+  isPatientNetworkQuestionRequest,
   isReferralRequest,
 } from '../askLamina'
 import { displayError } from '../utils'
@@ -164,7 +166,11 @@ export function PatientsPage({
   }
 
   const generate = useCallback(async (request: string): Promise<string> => {
-    if (isReferralRequest(request) || !isNetworkQuestionRequest(request)) {
+    const patientNetworkQuestion = isPatientNetworkQuestionRequest(request)
+    if (
+      isReferralRequest(request) ||
+      (!patientNetworkQuestion && !isNetworkQuestionRequest(request))
+    ) {
       return ASK_LAMINA_UNSUPPORTED
     }
     if (!selectedRef || pending) throw new Error('The patient context is not ready yet.')
@@ -210,8 +216,7 @@ export function PatientsPage({
       placeholder: 'Select a patient to work with bounded case context...',
       processingLabel: 'Reviewing patient workspace context...',
       suggestions: ['How does patient context stay private?'],
-      onSubmit: async () =>
-        'Select an authorized synthetic patient before drafting a grounded physician-network question.',
+      onSubmit: async () => OPEN_PATIENT_FOR_NETWORK_QUESTION,
     })
   }, [caseContext, generate, onAskChange, selectedRef])
 

@@ -723,13 +723,14 @@ def test_opaque_patient_generation_reuses_grounded_workflow_without_ids(client):
     medplum = FakeMedplumService()
     generation = FakeGenerationService()
     override_services(medplum, generation)
+    question = "Has anyone seen a patient with nausea after starting empagliflozin?"
     patient_ref = http.get(f"/physicians/{DEMO_NPI}/patients").json()["patients"][0][
         "patient_ref"
     ]
 
     response = http.post(
         f"/physicians/{DEMO_NPI}/patients/{patient_ref}/forum-posts/generate",
-        json={"physician_guidance": "Ask for clarifying medication history."},
+        json={"physician_guidance": question},
     )
 
     assert response.status_code == 200
@@ -744,6 +745,7 @@ def test_opaque_patient_generation_reuses_grounded_workflow_without_ids(client):
     assert "patient-secret-id" not in json.dumps(payload)
     assert "condition-secret-id" not in json.dumps(payload)
     assert "patient-secret-id" not in json.dumps(generation.medplum_calls[0][1])
+    assert generation.medplum_calls[0][2] == question
 
 
 def create_generated_post(http):

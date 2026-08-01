@@ -247,7 +247,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     api_main.app.dependency_overrides.clear()
 
 
-def create_published_linked_post(http: TestClient, database: Path, *, title=None) -> str:
+def create_linked_post(http: TestClient, database: Path, *, title=None) -> str:
     post = http.post(
         "/forum/posts/drafts",
         json={
@@ -271,14 +271,41 @@ def create_published_linked_post(http: TestClient, database: Path, *, title=None
             """,
             ("link-" + post["id"], post["id"], DEMO_AGENT_ID, "2026-07-31T12:00:00Z", "2026-07-31T12:00:00Z"),
         )
-    http.post(f"/forum/posts/{post['id']}/approve", json={"physician_npi": DEMO_NPI})
     return post["id"]
+
+
+def create_published_linked_post(http: TestClient, database: Path, *, title=None) -> str:
+    post_id = create_linked_post(http, database, title=title)
+    http.post(f"/forum/posts/{post_id}/approve", json={"physician_npi": DEMO_NPI})
+    return post_id
 
 
 def override(http, medplum, runtime):
     del http
     api_main.app.dependency_overrides[api_main.get_medplum_service] = lambda: medplum
     api_main.app.dependency_overrides[api_main.get_monitoring_runtime] = lambda: runtime
+
+
+def test_synthetic_approval_runs_grounded_monitoring_into_lianne_inbox(client):
+    http, database = client
+    runtime = FakeRuntime()
+    override(http, FakePanelMedplum(), runtime)
+    post_id = create_linked_post(http, database)
+
+    approved = http.post(
+        f"/forum/posts/{post_id}/approve", json={"physician_npi": DEMO_NPI}
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "published"
+    inbox = http.get(f"/physicians/{LIANNE_NPI}/review-inbox").json()
+    assert inbox["counts"]["responses"] == 1
+    response = inbox["response_drafts"][0]
+    assert response["post_id"] == post_id
+    assert response["author"]["agent_id"] == LIANNE_AGENT_ID
+    assert response["status"] == "awaiting_physician_approval"
+    assert http.get(f"/forum/posts/{post_id}").json()["responses"] == []
+    assert runtime.calls == 1
 
 
 def test_grounded_monitoring_draft_review_approval_and_idempotency(client):

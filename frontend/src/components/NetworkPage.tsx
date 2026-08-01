@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getForumFeed, getForumPost, type AgentDetails, type ForumPost } from '../api/client'
-import { ASK_LAMINA_UNSUPPORTED, isReferralRequest, networkSearchTerms } from '../askLamina'
+import {
+  ASK_LAMINA_UNSUPPORTED,
+  OPEN_PATIENT_FOR_NETWORK_QUESTION,
+  isPatientNetworkQuestionRequest,
+  isReferralRequest,
+  networkSearchTerms,
+} from '../askLamina'
 import {
   SHOWCASE_POSTS,
   normalizeShowcaseSearch,
@@ -61,6 +67,9 @@ export function NetworkPage({
   }, [loadFeed])
 
   const askLamina = useCallback(async (request: string): Promise<string> => {
+    if (isPatientNetworkQuestionRequest(request)) {
+      return OPEN_PATIENT_FOR_NETWORK_QUESTION
+    }
     if (isReferralRequest(request) || /\b(ask|draft|create|question)\b/i.test(request)) {
       return ASK_LAMINA_UNSUPPORTED
     }
