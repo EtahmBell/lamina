@@ -9,12 +9,15 @@ import openai
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
-from api.models import GeneratedPostDraft, GeneratedResponseDraft
+from api.models import GeneratedPostDraft, GeneratedResponseDraft, ReferralSpecialtyInference
 
 POST_PROMPT_VERSION = "lamina-post-draft-v2"
 RESPONSE_PROMPT_VERSION = "lamina-response-draft-v2"
 MEDPLUM_POST_PROMPT_VERSION = "lamina-medplum-post-draft-v2"
-OutputT = TypeVar("OutputT", GeneratedPostDraft, GeneratedResponseDraft)
+REFERRAL_PROMPT_VERSION = "lamina-referral-specialty-v2"
+OutputT = TypeVar(
+    "OutputT", GeneratedPostDraft, GeneratedResponseDraft, ReferralSpecialtyInference
+)
 _service_cache: tuple[OpenAISettings, OpenAIDraftGenerationService] | None = None
 
 
@@ -74,6 +77,10 @@ class DraftGenerationService(Protocol):
         case_facts: dict[str, object],
         physician_guidance: str,
     ) -> GenerationResult[GeneratedPostDraft]: ...
+
+    async def infer_referral_specialty(
+        self, case_facts: dict[str, object]
+    ) -> GenerationResult[ReferralSpecialtyInference]: ...
 
 
 def physician_agent_instructions(context: dict[str, object]) -> str:
@@ -209,6 +216,33 @@ class OpenAIDraftGenerationService:
             output=response.output_parsed,
             model=self.settings.model,
             prompt_version=MEDPLUM_POST_PROMPT_VERSION,
+            provider_response_id=response.id,
+        )
+
+    async def infer_referral_specialty(
+        self, case_facts: dict[str, object]
+    ) -> GenerationResult[ReferralSpecialtyInference]:
+        response = await self._parse(
+            instructions=(
+                "Infer one appropriate physician specialty from bounded synthetic case facts. "
+                "This is a specialist-network referral, not an acute-care or triage destination; "
+                "do not return Emergency Medicine or Urgent Care. "
+                "Return only the specialty and a short referral reason. Do not diagnose, rank "
+                "physicians, recommend a named physician, or add facts not supplied."
+            ),
+            input_text=(
+                f"Prompt version: {REFERRAL_PROMPT_VERSION}\n"
+                "Select the most relevant physician specialty for a referral discussion using "
+                "only these bounded synthetic case facts. Keep the reason concise and preserve "
+                "uncertainty.\n\n"
+                f"Bounded synthetic case facts:\n{json.dumps(case_facts, ensure_ascii=False)}"
+            ),
+            schema=ReferralSpecialtyInference,
+        )
+        return GenerationResult(
+            output=response.output_parsed,
+            model=self.settings.model,
+            prompt_version=REFERRAL_PROMPT_VERSION,
             provider_response_id=response.id,
         )
 

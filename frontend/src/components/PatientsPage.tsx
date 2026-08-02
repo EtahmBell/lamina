@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ApiError,
-  approveForumPost,
   generatePatientForumPost,
   getForumPost,
   getMyPatients,
   getPatientCaseContext,
+  getReferralRecommendations,
   monitorForumPost,
   type AgentDetails,
   type ForumPost,
@@ -16,13 +16,14 @@ import {
 import {
   ASK_LAMINA_UNSUPPORTED,
   OPEN_PATIENT_FOR_NETWORK_QUESTION,
+  OPEN_PATIENT_FOR_REFERRAL,
   isNetworkQuestionRequest,
   isPatientNetworkQuestionRequest,
   isReferralRequest,
 } from '../askLamina'
 import { displayError } from '../utils'
 import { ForumPostView } from './ForumPostView'
-import type { AskLaminaConfiguration } from './RightRail'
+import type { AskLaminaConfiguration, AskLaminaReply } from './RightRail'
 import type { PatientPostContext } from './PostComposerModal'
 import { Badge, EmptyState, ErrorBanner, PageLoading, PrimaryButton } from './ui'
 
@@ -31,7 +32,13 @@ const selectedPatientKey = (physicianNpi: string) =>
 const postStorageKey = (physicianNpi: string, patientRef: string) =>
   `lamina.patientPost.${physicianNpi}.${patientRef}`
 
-type PendingAction = 'patients' | 'case' | 'generating' | 'publishing' | 'monitoring' | null
+type PendingAction =
+  | 'patients'
+  | 'case'
+  | 'generating'
+  | 'referral'
+  | 'monitoring'
+  | null
 
 function ClinicalList({ title, items }: { title: string; items: string[] }) {
   return (
@@ -54,14 +61,18 @@ export function PatientsPage({
   physician,
   organizationName,
   onOpenNetwork,
+  onDraftCreated,
   onAskChange,
   onPatientContextChange,
+  connectedPhysicianNpis,
 }: {
   physician: AgentDetails
   organizationName: string | null
   onOpenNetwork: (postId: string) => void
+  onDraftCreated: (postId: string) => void
   onAskChange: (configuration: AskLaminaConfiguration) => void
   onPatientContextChange: (context: PatientPostContext | null) => void
+  connectedPhysicianNpis: string[]
 }) {
   const [patients, setPatients] = useState<PatientSummary[]>([])
   const [selectedRef, setSelectedRef] = useState<string | null>(() =>
@@ -165,12 +176,26 @@ export function PatientsPage({
     }
   }
 
-  const generate = useCallback(async (request: string): Promise<string> => {
+  const generate = useCallback(async (request: string): Promise<AskLaminaReply> => {
+    if (isReferralRequest(request)) {
+      if (!selectedRef || pending) throw new Error('The patient context is not ready yet.')
+      setPending('referral')
+      setError(null)
+      try {
+        return await getReferralRecommendations(
+          physician.physician_npi,
+          selectedRef,
+          connectedPhysicianNpis,
+        )
+      } catch (referralError) {
+        setError(displayError(referralError))
+        throw referralError
+      } finally {
+        setPending(null)
+      }
+    }
     const patientNetworkQuestion = isPatientNetworkQuestionRequest(request)
-    if (
-      isReferralRequest(request) ||
-      (!patientNetworkQuestion && !isNetworkQuestionRequest(request))
-    ) {
+    if (!patientNetworkQuestion && !isNetworkQuestionRequest(request)) {
       return ASK_LAMINA_UNSUPPORTED
     }
     if (!selectedRef || pending) throw new Error('The patient context is not ready yet.')
@@ -188,22 +213,24 @@ export function PatientsPage({
       )
       setPost(generated)
       setMonitoringResults([])
-      return 'Network question ready for your review. It has not been published.'
+      onDraftCreated(generated.id)
+      return 'Network question ready in Publication Center. It has not been published.'
     } catch (generationError) {
       setError(displayError(generationError))
       throw generationError
     } finally {
       setPending(null)
     }
-  }, [pending, physician.physician_npi, selectedRef])
+  }, [connectedPhysicianNpis, onDraftCreated, pending, physician.physician_npi, selectedRef])
 
   useEffect(() => {
     if (caseContext && selectedRef) {
       onAskChange({
         contextLabel: `${caseContext.display_name} · bounded Medplum context`,
         placeholder: 'Ask the network about this synthetic patient context...',
-        processingLabel: 'Preparing a real approval-required network question...',
+        processingLabel: 'Reviewing bounded patient context...',
         suggestions: [
+          'Who should I refer this patient to?',
           'Has anyone seen something similar?',
           'Draft a question about this medication pattern',
         ],
@@ -216,7 +243,9 @@ export function PatientsPage({
       placeholder: 'Select a patient to work with bounded case context...',
       processingLabel: 'Reviewing patient workspace context...',
       suggestions: ['How does patient context stay private?'],
-      onSubmit: async () => OPEN_PATIENT_FOR_NETWORK_QUESTION,
+      onSubmit: async (request) => isReferralRequest(request)
+        ? OPEN_PATIENT_FOR_REFERRAL
+        : OPEN_PATIENT_FOR_NETWORK_QUESTION,
     })
   }, [caseContext, generate, onAskChange, selectedRef])
 
@@ -227,12 +256,6 @@ export function PatientsPage({
         : null,
     )
   }, [caseContext, onPatientContextChange, selectedRef])
-
-  const approve = () =>
-    run('publishing', async () => {
-      if (!post) return
-      setPost(await approveForumPost(post.id, physician.physician_npi))
-    })
 
   const monitor = () =>
     run('monitoring', async () => {
@@ -389,23 +412,9 @@ export function PatientsPage({
             />
           </div>
 
-          {post && (
+          {post?.status === 'published' && (
             <div className="mt-6 space-y-4">
               <ForumPostView post={post} />
-              {post.status === 'awaiting_physician_approval' && (
-                <div className="surface flex flex-wrap items-center gap-3 border-l-4 border-l-[var(--warning)] px-4 py-4">
-                  <div>
-                    <div className="font-semibold text-[var(--text-primary)]">Physician review required</div>
-                    <div className="secondary-copy">Approval publishes this exact backend draft.</div>
-                  </div>
-                  <div className="ml-auto">
-                    <PrimaryButton tone="approve" disabled={pending === 'publishing'} onClick={approve}>
-                      {pending === 'publishing' ? 'Publishing...' : 'Approve and publish'}
-                    </PrimaryButton>
-                  </div>
-                </div>
-              )}
-
               {post.status === 'published' && (
                 <section className="surface px-5 py-5">
                   <div className="flex flex-wrap items-center gap-3">

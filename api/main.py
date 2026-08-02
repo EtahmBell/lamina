@@ -28,6 +28,7 @@ from api.models import (
     MedplumCaseContext,
     PhysicianApprovalInput,
     PhysicianRejectionInput,
+    ReferralRecommendationInput,
 )
 from api.monitoring import (
     MonitoringError,
@@ -262,6 +263,127 @@ def resolve_opaque_patient_ref(
         if compare_digest(opaque_patient_ref(agent_id, case.patient_id), patient_ref):
             return index, case
     raise HTTPException(status_code=404, detail="Patient not found in authorized panel")
+
+
+def referral_case_facts(case: MedplumCaseContext) -> dict[str, object]:
+    return {
+        "synthetic": True,
+        "age_band": case.age_band,
+        "conditions": [item.model_dump() for item in case.conditions],
+        "medications": [item.model_dump() for item in case.medications],
+        "observations": [item.model_dump() for item in case.observations],
+    }
+
+
+def referral_candidates(
+    connection: sqlite3.Connection,
+    *,
+    referring_physician_npi: str,
+    specialty: str,
+    connected_physician_npis: set[str],
+) -> list[dict[str, object]]:
+    fts_query = fts_prefix_query(specialty)
+    if not fts_query:
+        return []
+    referrer = connection.execute(
+        "SELECT city, state FROM physicians WHERE npi=?", (referring_physician_npi,)
+    ).fetchone()
+    rows = connection.execute(
+        """
+        SELECT p.*, a.id AS agent_id, a.status AS agent_status
+        FROM physician_fts
+        JOIN physicians p ON p.npi=physician_fts.npi
+        JOIN agents a ON a.physician_npi=p.npi
+        WHERE physician_fts MATCH ? AND p.npi != ? AND p.active=1
+        ORDER BY
+          (lower(trim(p.primary_specialty)) = ?) DESC,
+          (lower(p.source) = 'synthetic') DESC,
+          p.display_name,
+          p.npi
+        LIMIT 75
+        """,
+        (fts_query, referring_physician_npi, specialty.casefold().strip()),
+    ).fetchall()
+    normalized_specialty = specialty.casefold().strip()
+    ranked: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    for row in rows:
+        candidate_specialty = (row["primary_specialty"] or "").strip()
+        normalized_candidate = candidate_specialty.casefold()
+        exact_specialty = normalized_candidate == normalized_specialty
+        related_specialty = bool(normalized_candidate) and (
+            normalized_specialty in normalized_candidate
+            or normalized_candidate in normalized_specialty
+        )
+        source_is_synthetic = row["source"].casefold() == "synthetic"
+        connected = source_is_synthetic and row["npi"] in connected_physician_npis
+        activity_pattern = f"%{normalized_specialty}%"
+        activity_count = connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM forum_posts
+               WHERE author_physician_npi=? AND status='published'
+                 AND lower(specialty_tags_json) LIKE ?)
+              +
+              (SELECT count(*) FROM forum_responses r
+               JOIN forum_posts p ON p.id=r.post_id
+               WHERE r.author_physician_npi=? AND r.status='published'
+                 AND p.status='published' AND lower(p.specialty_tags_json) LIKE ?)
+            """,
+            (row["npi"], activity_pattern, row["npi"], activity_pattern),
+        ).fetchone()[0]
+        active_lamina = source_is_synthetic and row["agent_status"] == "active"
+        same_city = bool(
+            referrer
+            and referrer["city"]
+            and row["city"]
+            and referrer["city"].casefold() == row["city"].casefold()
+            and referrer["state"] == row["state"]
+        )
+        same_state = bool(referrer and referrer["state"] == row["state"])
+        why = [
+            (
+                f"{specialty} specialty match"
+                if exact_specialty
+                else f"Relevant specialty listing: {candidate_specialty}"
+            )
+        ]
+        if connected:
+            why.append("Connected to you")
+        if activity_count:
+            why.append("Relevant Lamina contribution activity")
+        if active_lamina:
+            why.append("Active Lamina physician")
+        if same_city:
+            why.append("Same practice city")
+        elif same_state:
+            why.append("Same state")
+        lamina_status = row["agent_status"] if source_is_synthetic else "unclaimed"
+        candidate = {
+            "npi": row["npi"],
+            "name": row["display_name"],
+            "specialty": candidate_specialty,
+            "city": row["city"] or "",
+            "state": row["state"] or "",
+            "connection_status": "connected" if connected else "not_connected",
+            "lamina_status": lamina_status,
+            "why": why,
+        }
+        rank = (
+            -int(exact_specialty),
+            -int(connected),
+            -int(activity_count > 0),
+            -activity_count,
+            -int(active_lamina),
+            -int(same_city),
+            -int(same_state),
+            -int(source_is_synthetic),
+            -int(related_specialty),
+            row["display_name"].casefold(),
+            row["npi"],
+        )
+        ranked.append((rank, candidate))
+    ranked.sort(key=lambda item: item[0])
+    return [candidate for _, candidate in ranked[:3]]
 
 
 def latest_claim(connection: sqlite3.Connection, agent_id: str) -> sqlite3.Row | None:
@@ -1818,6 +1940,56 @@ async def get_physician_patient_context(
         "patient_ref": patient_ref,
         "display_name": f"Synthetic Patient {chr(65 + index)}",
         **case.model_dump(exclude={"patient_id", "source_resource_refs"}),
+    }
+
+
+@app.post("/referrals/recommendations")
+async def get_referral_recommendations(
+    request: ReferralRecommendationInput,
+    injected_medplum: Annotated[MedplumService | None, Depends(get_medplum_service)],
+    injected_generation: Annotated[
+        DraftGenerationService | None, Depends(get_generation_service)
+    ],
+) -> dict[str, object]:
+    try:
+        agent, cases = await get_authorized_physician_panel(
+            request.referring_physician_npi, injected_medplum
+        )
+        _, case = resolve_opaque_patient_ref(agent["id"], request.patient_ref, cases)
+    except MedplumError as error:
+        raise translate_medplum_error(error) from error
+    except OrganizationError as error:
+        raise translate_organization_error(error) from error
+
+    try:
+        generator = injected_generation or create_generation_service()
+        inference = await generator.infer_referral_specialty(referral_case_facts(case))
+    except GenerationError as error:
+        if error.configuration:
+            detail = "OpenAI referral inference is not configured on this server"
+        else:
+            detail = "Referral recommendations are temporarily unavailable"
+        raise HTTPException(
+            status_code=(
+                503
+                if error.configuration
+                or error.category in {"openai_timeout", "openai_rate_limited"}
+                else 502
+            ),
+            detail=detail,
+        ) from error
+
+    with connect() as connection:
+        candidates = referral_candidates(
+            connection,
+            referring_physician_npi=request.referring_physician_npi,
+            specialty=inference.output.specialty,
+            connected_physician_npis=set(request.connected_physician_npis),
+        )
+    return {
+        "specialty": inference.output.specialty,
+        "reason": inference.output.reason,
+        "candidates": candidates,
     }
 
 

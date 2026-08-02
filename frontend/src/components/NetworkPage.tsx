@@ -3,6 +3,7 @@ import { getForumFeed, getForumPost, type AgentDetails, type ForumPost } from '.
 import {
   ASK_LAMINA_UNSUPPORTED,
   OPEN_PATIENT_FOR_NETWORK_QUESTION,
+  OPEN_PATIENT_FOR_REFERRAL,
   isPatientNetworkQuestionRequest,
   isReferralRequest,
   networkSearchTerms,
@@ -70,7 +71,10 @@ export function NetworkPage({
     if (isPatientNetworkQuestionRequest(request)) {
       return OPEN_PATIENT_FOR_NETWORK_QUESTION
     }
-    if (isReferralRequest(request) || /\b(ask|draft|create|question)\b/i.test(request)) {
+    if (isReferralRequest(request)) {
+      return OPEN_PATIENT_FOR_REFERRAL
+    }
+    if (/\b(ask|draft|create|question)\b/i.test(request)) {
       return ASK_LAMINA_UNSUPPORTED
     }
     const query = normalizeShowcaseSearch(networkSearchTerms(request))

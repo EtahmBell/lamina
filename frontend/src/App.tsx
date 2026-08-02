@@ -42,6 +42,7 @@ export default function App() {
   const [signInProfiles, setSignInProfiles] = useState<AgentDetails[]>([])
   const [organization, setOrganization] = useState<OrganizationSummary | null>(null)
   const [focusedPostId, setFocusedPostId] = useState<string | null>(null)
+  const [focusedPhysicianNpi, setFocusedPhysicianNpi] = useState<string | null>(null)
   const [connectedIds, setConnectedIds] = useState<string[]>([])
   const [askConfiguration, setAskConfiguration] = useState<AskLaminaConfiguration>(
     DEFAULT_ASK_CONFIGURATION,
@@ -94,6 +95,12 @@ export default function App() {
     setNav('home')
   }
 
+  const openPublicationDraft = (postId: string) => {
+    setFocusedPostId(postId)
+    setPatientPostContext(null)
+    setNav('publication')
+  }
+
   const toggleConnection = useCallback((physicianId: string) => {
     if (!identity) return
     setConnectedIds((current) => {
@@ -108,6 +115,7 @@ export default function App() {
   const handleSignOut = () => {
     setNav('home')
     setFocusedPostId(null)
+    setFocusedPhysicianNpi(null)
     setPhysician(null)
     setOrganization(null)
     setConnectedIds([])
@@ -126,6 +134,7 @@ export default function App() {
         onContinue={(npi) => {
           setNav('home')
           setFocusedPostId(null)
+          setFocusedPhysicianNpi(null)
           setPatientPostContext(null)
           signIn(npi)
         }}
@@ -141,6 +150,7 @@ export default function App() {
         organizationName={organization?.name ?? null}
         onNavigate={(key) => {
           setFocusedPostId(null)
+          setFocusedPhysicianNpi(null)
           setAskConfiguration(DEFAULT_ASK_CONFIGURATION)
           if (key !== 'patients') setPatientPostContext(null)
           setNav(key)
@@ -168,8 +178,10 @@ export default function App() {
             physician={physician}
             organizationName={organization?.name ?? null}
             onOpenNetwork={openNetworkPost}
+            onDraftCreated={openPublicationDraft}
             onAskChange={setAskConfiguration}
             onPatientContextChange={setPatientPostContext}
+            connectedPhysicianNpis={connectedIds.filter((id) => /^\d{10}$/.test(id))}
           />
         )}
         {!loading && physician && !error && nav === 'home' && (
@@ -209,6 +221,7 @@ export default function App() {
             connectedIds={connectedIds}
             onToggleConnection={toggleConnection}
             onAskChange={setAskConfiguration}
+            focusedNpi={focusedPhysicianNpi}
           />
         )}
         {!loading && physician && !error && nav === 'profile' && (
@@ -223,6 +236,10 @@ export default function App() {
         <RightRail
           physician={physician}
           configuration={askConfiguration}
+          onViewPhysician={(npi) => {
+            setFocusedPhysicianNpi(npi)
+            setNav('physicians')
+          }}
         />
       )}
       </div>

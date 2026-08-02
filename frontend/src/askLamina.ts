@@ -1,8 +1,11 @@
 export const ASK_LAMINA_UNSUPPORTED =
-  'Lamina can currently help you ask the physician network, review grounded responses, and search published discussions. Referral and draft-revision workflows are not available yet.'
+  'Lamina can currently help you ask the physician network, review grounded responses, search published discussions, and find referral candidates from an open patient.'
 
 export const OPEN_PATIENT_FOR_NETWORK_QUESTION =
   'Open a patient first to ask the physician network about this case.'
+
+export const OPEN_PATIENT_FOR_REFERRAL =
+  'Open a patient first to find relevant referral candidates.'
 
 export function isReferralRequest(request: string): boolean {
   return /\b(refer|referral)\b/i.test(request)

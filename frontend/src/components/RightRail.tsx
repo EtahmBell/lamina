@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import type { AgentDetails } from '../api/client'
+import { useEffect, useRef, useState } from 'react'
+import type { AgentDetails, ReferralRecommendations } from '../api/client'
 import { displayError } from '../utils'
+import { AskLaminaComposer } from './AskLaminaComposer'
 import { Icon } from './Icon'
 
 export type AskLaminaConfiguration = {
@@ -8,37 +9,20 @@ export type AskLaminaConfiguration = {
   placeholder: string
   processingLabel: string
   suggestions?: string[]
-  onSubmit: (request: string) => Promise<string>
+  onSubmit: (request: string) => Promise<AskLaminaReply>
 }
+
+export type AskLaminaReply = string | ReferralRecommendations
 
 type ChatMessage = {
   id: number
   role: 'user' | 'assistant'
-  text: string
+  text?: string
+  referral?: ReferralRecommendations
   error?: boolean
 }
 
 let messageId = 0
-
-type SpeechRecognitionLike = {
-  lang: string
-  interimResults: boolean
-  continuous: boolean
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-  onend: (() => void) | null
-  onerror: ((event: { error: string }) => void) | null
-  start: () => void
-  stop: () => void
-}
-
-function getSpeechRecognition(): SpeechRecognitionLike | null {
-  const w = window as unknown as {
-    SpeechRecognition?: new () => SpeechRecognitionLike
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike
-  }
-  const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition
-  return Ctor ? new Ctor() : null
-}
 
 function timeGreeting(): string {
   const hour = new Date().getHours()
@@ -50,25 +34,22 @@ function timeGreeting(): string {
 export function RightRail({
   physician,
   configuration,
+  onViewPhysician,
 }: {
   physician: AgentDetails
   configuration: AskLaminaConfiguration
+  onViewPhysician: (npi: string) => void
 }) {
   const baseName = physician.physician.display_name.split(',')[0].replace(/^Dr\.?\s+/i, '').trim()
   const lastName = baseName.split(' ').slice(-1)[0]
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [request, setRequest] = useState('')
   const [processing, setProcessing] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const [voiceNote, setVoiceNote] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
 
   // Fresh conversation when the signed-in physician changes.
   useEffect(() => {
     setMessages([])
-    setRequest('')
     setProcessing(false)
   }, [physician.physician_npi])
 
@@ -79,12 +60,18 @@ export function RightRail({
   const send = async (text: string) => {
     const clean = text.trim()
     if (!clean || processing) return
-    setRequest('')
     setMessages((prev) => [...prev, { id: ++messageId, role: 'user', text: clean }])
     setProcessing(true)
     try {
       const reply = await configuration.onSubmit(clean)
-      setMessages((prev) => [...prev, { id: ++messageId, role: 'assistant', text: reply }])
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: ++messageId,
+          role: 'assistant',
+          ...(typeof reply === 'string' ? { text: reply } : { referral: reply }),
+        },
+      ])
     } catch (error) {
       setMessages((prev) => [
         ...prev,
@@ -94,51 +81,6 @@ export function RightRail({
       setProcessing(false)
     }
   }
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    void send(request)
-  }
-
-  const toggleVoice = () => {
-    if (recording) {
-      recognitionRef.current?.stop()
-      return
-    }
-    const recognition = getSpeechRecognition()
-    if (!recognition) {
-      setVoiceNote('Voice input is not supported in this browser — try Chrome or Edge.')
-      return
-    }
-    recognition.lang = 'en-US'
-    recognition.interimResults = false
-    recognition.continuous = false
-    recognition.onresult = (event) => {
-      const transcript = Array.from({ length: event.results.length })
-        .map((_, i) => event.results[i][0].transcript)
-        .join(' ')
-        .trim()
-      if (!transcript) return
-      setRequest((current) => (current ? `${current.trim()} ${transcript}` : transcript))
-      setVoiceNote(null)
-    }
-    recognition.onerror = (event) => {
-      setVoiceNote(
-        event.error === 'not-allowed'
-          ? 'Microphone access was denied.'
-          : `Voice input error: ${event.error}`,
-      )
-      setRecording(false)
-    }
-    recognition.onend = () => setRecording(false)
-    recognitionRef.current = recognition
-    setVoiceNote('Listening… speak your request.')
-    setRecording(true)
-    recognition.start()
-  }
-
-  // Stop listening if the panel unmounts mid-recording.
-  useEffect(() => () => recognitionRef.current?.stop(), [])
 
   return (
     <aside className="right-rail ask-right-rail agent-chat" aria-label="Your agent">
@@ -166,7 +108,64 @@ export function RightRail({
             key={message.id}
             className={`agent-chat-bubble ${message.role}${message.error ? ' error' : ''}`}
           >
-            {message.text}
+            {message.referral ? (
+              <div className="space-y-4">
+                <div>
+                  <div className="eyebrow">Relevant referral candidates</div>
+                  <div className="physician-name mt-1 text-xl font-semibold">
+                    {message.referral.specialty}
+                  </div>
+                  <p className="secondary-copy mt-1 text-sm">{message.referral.reason}</p>
+                </div>
+                {message.referral.candidates.length ? (
+                  message.referral.candidates.map((candidate) => {
+                    const unclaimed = candidate.lamina_status === 'unclaimed'
+                    const statusLabel = unclaimed
+                      ? 'NPPES Directory · Unclaimed'
+                      : candidate.connection_status === 'connected'
+                        ? 'Connected'
+                        : candidate.lamina_status === 'active'
+                          ? 'Active on Lamina'
+                          : 'Lamina profile'
+                    return (
+                      <article
+                        key={candidate.npi}
+                        className="border-t border-[var(--border)] pt-3"
+                      >
+                        <div className="physician-name text-lg font-semibold">
+                          {candidate.name}
+                        </div>
+                        <div className="metadata mt-1">
+                          {candidate.specialty} · {statusLabel}
+                        </div>
+                        {(candidate.city || candidate.state) && (
+                          <div className="secondary-copy mt-1 text-sm">
+                            {[candidate.city, candidate.state].filter(Boolean).join(', ')}
+                          </div>
+                        )}
+                        <div className="mt-3 text-sm font-medium text-[var(--text-primary)]">
+                          Why {candidate.name.split(',')[0]} surfaced
+                        </div>
+                        <ul className="secondary-copy mt-1 list-disc space-y-0.5 pl-5 text-sm">
+                          {candidate.why.map((reason) => <li key={reason}>{reason}</li>)}
+                        </ul>
+                        <button
+                          type="button"
+                          onClick={() => onViewPhysician(candidate.npi)}
+                          className="text-action mt-3"
+                        >
+                          View profile
+                        </button>
+                      </article>
+                    )
+                  })
+                ) : (
+                  <p className="secondary-copy text-sm">
+                    No matching directory candidates were found.
+                  </p>
+                )}
+              </div>
+            ) : message.text}
           </div>
         ))}
         {processing && (
@@ -177,46 +176,18 @@ export function RightRail({
       </div>
 
       <footer className="agent-chat-footer">
-        {(configuration.suggestions ?? []).length > 0 && (
-          <div className="agent-chat-chips" aria-label="Suggested prompts">
-            {(configuration.suggestions ?? []).map((suggestion) => (
-              <button key={suggestion} type="button" onClick={() => setRequest(suggestion)}>
-                {suggestion}
-              </button>
-            ))}
-          </div>
-        )}
-        <form onSubmit={submit} className="agent-chat-inputrow">
-          <input
-            value={request}
-            onChange={(event) => setRequest(event.target.value)}
-            disabled={processing}
-            placeholder={recording ? 'Listening…' : configuration.placeholder}
-            aria-label="Ask your agent"
-            className="agent-chat-input"
-          />
-          <button
-            type="button"
-            onClick={toggleVoice}
-            aria-label={recording ? 'Stop voice input' : 'Start voice input'}
-            aria-pressed={recording}
-            title={recording ? 'Stop listening' : 'Dictate your request'}
-            className={`agent-chat-mic${recording ? ' recording' : ''}`}
-          >
-            <Icon name="mic" className="h-4 w-4" />
-          </button>
-          <button
-            type="submit"
-            disabled={!request.trim() || processing}
-            aria-label="Send"
-            className="agent-chat-send"
-          >
-            <Icon name="arrow-up" className="h-4 w-4" />
-          </button>
-        </form>
-        {voiceNote && (
-          <p className="agent-chat-voicenote" role="status">{voiceNote}</p>
-        )}
+        <AskLaminaComposer
+          key={physician.physician_npi}
+          contextLabel={configuration.contextLabel}
+          placeholder={configuration.placeholder}
+          processingLabel={configuration.processingLabel}
+          suggestions={configuration.suggestions}
+          panel
+          onSubmit={async (request) => {
+            await send(request)
+            return ''
+          }}
+        />
         <p className="agent-chat-safety">
           Lamina routes supported actions through physician-network workflows. It does not provide
           generic medical chat.

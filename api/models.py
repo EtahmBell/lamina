@@ -287,6 +287,34 @@ class GeneratePatientPostInput(BaseModel):
         return value.strip()
 
 
+class ReferralRecommendationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    referring_physician_npi: str = Field(pattern=r"^\d{10}$")
+    patient_ref: str = Field(min_length=1, max_length=100)
+    connected_physician_npis: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("connected_physician_npis")
+    @classmethod
+    def normalize_connected_npis(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(value.strip() for value in values))
+        if any(len(value) != 10 or not value.isdigit() for value in normalized):
+            raise ValueError("connected physician NPIs must be 10 digits")
+        return normalized
+
+
+class ReferralSpecialtyInference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    specialty: str = Field(min_length=2, max_length=120)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("specialty", "reason")
+    @classmethod
+    def normalize_referral_text(cls, value: str) -> str:
+        return " ".join(value.split()).strip()
+
+
 class MonitoringConfidence(StrEnum):
     LOW = "low"
     MEDIUM = "medium"

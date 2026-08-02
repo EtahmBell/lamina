@@ -19,10 +19,12 @@ export function PhysiciansPage({
   connectedIds,
   onToggleConnection,
   onAskChange,
+  focusedNpi,
 }: {
   connectedIds: string[]
   onToggleConnection: (physicianId: string) => void
   onAskChange: (configuration: AskLaminaConfiguration) => void
+  focusedNpi: string | null
 }) {
   const [query, setQuery] = useState('')
   const [state, setState] = useState('')
@@ -53,7 +55,7 @@ export function PhysiciansPage({
         processingLabel: 'Reviewing directory profile context...',
         suggestions: ['What does unclaimed mean?', 'Can this profile access patient data?'],
         onSubmit: async () => synthetic
-          ? 'This synthetic Lamina profile is separate from fictional showcase connections.'
+          ? 'This synthetic Lamina physician can participate in demo connections and approved workflows.'
           : 'This is unclaimed NPPES directory data. Lamina does not attribute activity, authorization, or endorsement to it.',
       })
       return
@@ -94,7 +96,7 @@ export function PhysiciansPage({
     }
   }
 
-  const openDirectoryProfile = async (npi: string) => {
+  const openDirectoryProfile = useCallback(async (npi: string) => {
     setSearching(true)
     setError(null)
     try {
@@ -104,7 +106,13 @@ export function PhysiciansPage({
     } finally {
       setSearching(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!focusedNpi) return
+    setSelectedShowcase(null)
+    void openDirectoryProfile(focusedNpi)
+  }, [focusedNpi, openDirectoryProfile])
 
   if (selectedShowcase) {
     return (
@@ -186,7 +194,11 @@ export function PhysiciansPage({
         </form>
 
         {selectedDirectory && (
-          <DirectoryProfile physician={selectedDirectory} />
+          <DirectoryProfile
+            physician={selectedDirectory}
+            connected={connectedIds.includes(selectedDirectory.npi)}
+            onToggleConnection={onToggleConnection}
+          />
         )}
 
         <div className="surface mt-5 divide-y divide-[var(--border)]">
@@ -216,7 +228,15 @@ export function PhysiciansPage({
   )
 }
 
-function DirectoryProfile({ physician }: { physician: PhysicianDirectoryResult }) {
+function DirectoryProfile({
+  physician,
+  connected,
+  onToggleConnection,
+}: {
+  physician: PhysicianDirectoryResult
+  connected: boolean
+  onToggleConnection: (physicianId: string) => void
+}) {
   const synthetic = physician.source.toLowerCase() === 'synthetic'
   return (
     <article className="surface mt-5 border-l-4 border-l-[var(--clinical)] px-5 py-5">
@@ -233,6 +253,15 @@ function DirectoryProfile({ physician }: { physician: PhysicianDirectoryResult }
             {physician.city ? ` · ${physician.city}, ${physician.state}` : ''}
           </p>
           <p className="metadata mt-3">NPI {physician.npi}</p>
+          {synthetic && (
+            <button
+              type="button"
+              onClick={() => onToggleConnection(physician.npi)}
+              className={connected ? 'button-secondary mt-4' : 'button-primary mt-4'}
+            >
+              {connected ? 'Connected' : 'Connect'}
+            </button>
+          )}
           {!synthetic && (
             <p className="secondary-copy mt-4 border-t border-[var(--border)] pt-4">
               No Lamina activity, connections, or endorsement is attributed to this directory record.

@@ -19,7 +19,9 @@ function readStore(): StoredConnections {
 
 export function getDemoConnections(physicianNpi: string): string[] {
   const allowed = new Set(SHOWCASE_PHYSICIANS.map((physician) => physician.id))
-  return (readStore()[physicianNpi] ?? []).filter((id) => allowed.has(id))
+  return (readStore()[physicianNpi] ?? []).filter(
+    (id) => allowed.has(id) || /^\d{10}$/.test(id),
+  )
 }
 
 export function saveDemoConnections(physicianNpi: string, connectionIds: string[]): void {

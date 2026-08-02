@@ -23,9 +23,11 @@ from api.models import (
     MedplumConditionContext,
     MedplumMedicationContext,
     MedplumObservationContext,
+    ReferralSpecialtyInference,
 )
 from api.openai_generation import (
     MEDPLUM_POST_PROMPT_VERSION,
+    REFERRAL_PROMPT_VERSION,
     GenerationError,
     GenerationResult,
 )
@@ -205,6 +207,7 @@ class FakeGenerationService:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.medplum_calls: list[tuple[dict, dict, str]] = []
+        self.referral_calls: list[dict[str, object]] = []
 
     async def generate_medplum_post(self, context, case_facts, physician_guidance):
         self.medplum_calls.append((context, case_facts, physician_guidance))
@@ -221,6 +224,20 @@ class FakeGenerationService:
             model="fake-model",
             prompt_version=MEDPLUM_POST_PROMPT_VERSION,
             provider_response_id="response-fake",
+        )
+
+    async def infer_referral_specialty(self, case_facts):
+        self.referral_calls.append(case_facts)
+        if self.fail:
+            raise GenerationError("openai_timeout")
+        return GenerationResult(
+            output=ReferralSpecialtyInference(
+                specialty="Endocrinology",
+                reason="Medication-related symptoms warrant an endocrinology discussion.",
+            ),
+            model="fake-model",
+            prompt_version=REFERRAL_PROMPT_VERSION,
+            provider_response_id="response-referral-fake",
         )
 
 
@@ -746,6 +763,80 @@ def test_opaque_patient_generation_reuses_grounded_workflow_without_ids(client):
     assert "condition-secret-id" not in json.dumps(payload)
     assert "patient-secret-id" not in json.dumps(generation.medplum_calls[0][1])
     assert generation.medplum_calls[0][2] == question
+
+
+def test_referral_recommendations_use_bounded_context_and_deterministic_ranking(client):
+    http, database = client
+    activate(http, LIANNE_NPI, LIANNE_AGENT_ID)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO physicians (
+              npi, display_name, primary_specialty, city, state, source, profile_status
+            ) VALUES (
+              '1234567891', 'Directory Endocrinologist, MD', 'Endocrinology',
+              'Oakland', 'CA', 'NPPES', 'unclaimed'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agents (id, physician_npi)
+            VALUES ('agent-1234567891', '1234567891')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO physician_fts (npi, display_name, primary_specialty, city, state)
+            VALUES (
+              '1234567891', 'Directory Endocrinologist, MD', 'Endocrinology',
+              'Oakland', 'CA'
+            )
+            """
+        )
+
+    medplum = FakeMedplumService()
+    generation = FakeGenerationService()
+    override_services(medplum, generation)
+    patient_ref = http.get(f"/physicians/{DEMO_NPI}/patients").json()["patients"][0][
+        "patient_ref"
+    ]
+
+    response = http.post(
+        "/referrals/recommendations",
+        json={
+            "referring_physician_npi": DEMO_NPI,
+            "patient_ref": patient_ref,
+            "connected_physician_npis": [LIANNE_NPI],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["specialty"] == "Endocrinology"
+    assert "best doctor" not in json.dumps(payload).casefold()
+    assert len(payload["candidates"]) <= 3
+    lianne = payload["candidates"][0]
+    assert lianne["npi"] == LIANNE_NPI
+    assert lianne["connection_status"] == "connected"
+    assert lianne["lamina_status"] == "active"
+    assert lianne["why"][:2] == [
+        "Endocrinology specialty match",
+        "Connected to you",
+    ]
+    directory = next(
+        candidate
+        for candidate in payload["candidates"]
+        if candidate["npi"] == "1234567891"
+    )
+    assert directory["lamina_status"] == "unclaimed"
+    assert directory["connection_status"] == "not_connected"
+
+    model_input = json.dumps(generation.referral_calls)
+    assert "Type 2 diabetes mellitus" in model_input
+    assert "patient-secret-id" not in model_input
+    assert "condition-secret-id" not in model_input
+    assert "source_resource_refs" not in model_input
 
 
 def create_generated_post(http):

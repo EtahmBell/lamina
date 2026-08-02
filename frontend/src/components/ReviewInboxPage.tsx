@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  approveForumPost,
   approveForumResponse,
   getGroundingReview,
   getReviewInbox,
   type AgentDetails,
+  type ForumPost,
   type ForumResponse,
   type GroundingReview,
 } from '../api/client'
 import { displayError } from '../utils'
+import { ForumPostView } from './ForumPostView'
 import { PhysicianAvatar } from './PhysicianAvatar'
 import type { AskLaminaConfiguration } from './RightRail'
 import { Badge, EmptyState, ErrorBanner, PageLoading, PrimaryButton } from './ui'
@@ -23,6 +26,8 @@ export function ReviewInboxPage({
   onApproved: (postId: string) => void
   onAskChange: (configuration: AskLaminaConfiguration) => void
 }) {
+  const [posts, setPosts] = useState<ForumPost[]>([])
+  const [selectedPost, setSelectedPost] = useState<ForumPost | null>(null)
   const [responses, setResponses] = useState<ForumResponse[]>([])
   const [selected, setSelected] = useState<ForumResponse | null>(null)
   const [grounding, setGrounding] = useState<GroundingReview | null>(null)
@@ -30,7 +35,15 @@ export function ReviewInboxPage({
   const [approving, setApproving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const openPost = useCallback((post: ForumPost) => {
+    setSelectedPost(post)
+    setSelected(null)
+    setGrounding(null)
+    setError(null)
+  }, [])
+
   const openResponse = useCallback(async (response: ForumResponse) => {
+    setSelectedPost(null)
     setSelected(response)
     setGrounding(null)
     setError(null)
@@ -50,13 +63,19 @@ export function ReviewInboxPage({
     setError(null)
     try {
       const inbox = await getReviewInbox(physician.physician_npi)
+      setPosts(inbox.post_drafts)
       setResponses(inbox.response_drafts)
-      const preferred =
+      const preferredPost =
+        inbox.post_drafts.find((post) => post.id === focusedPostId) ?? null
+      const preferredResponse =
         inbox.response_drafts.find((response) => response.post_id === focusedPostId) ??
-        inbox.response_drafts[0] ??
         null
-      if (preferred) await openResponse(preferred)
+      if (preferredPost) openPost(preferredPost)
+      else if (preferredResponse) await openResponse(preferredResponse)
+      else if (inbox.post_drafts[0]) openPost(inbox.post_drafts[0])
+      else if (inbox.response_drafts[0]) await openResponse(inbox.response_drafts[0])
       else {
+        setSelectedPost(null)
         setSelected(null)
         setGrounding(null)
       }
@@ -65,7 +84,7 @@ export function ReviewInboxPage({
     } finally {
       setLoading(false)
     }
-  }, [focusedPostId, openResponse, physician.physician_npi])
+  }, [focusedPostId, openPost, openResponse, physician.physician_npi])
 
   useEffect(() => {
     void loadInbox()
@@ -83,15 +102,23 @@ export function ReviewInboxPage({
   }, [onAskChange])
 
   const approve = async () => {
-    if (!selected || approving) return
+    if ((!selectedPost && !selected) || approving) return
     setApproving(true)
     setError(null)
     try {
-      const approved = await approveForumResponse(
-        selected.id,
-        physician.physician_npi,
-      )
-      onApproved(approved.post_id)
+      if (selectedPost) {
+        const approved = await approveForumPost(
+          selectedPost.id,
+          physician.physician_npi,
+        )
+        onApproved(approved.id)
+      } else if (selected) {
+        const approved = await approveForumResponse(
+          selected.id,
+          physician.physician_npi,
+        )
+        onApproved(approved.post_id)
+      }
     } catch (approvalError) {
       setError(displayError(approvalError))
     } finally {
@@ -134,22 +161,46 @@ export function ReviewInboxPage({
       </div>
       <p className="secondary-copy mt-2 max-w-3xl">
         Production authentication is deferred. This explicit handoff demonstrates that only the
-        physician who owns the response can approve it.
+        physician who owns a draft can approve it.
       </p>
 
       {error && <div className="mt-5"><ErrorBanner message={error} /></div>}
 
-      {responses.length === 0 ? (
+      {posts.length === 0 && responses.length === 0 ? (
         <div className="mt-6">
           <EmptyState
-            title="No pending specialist reviews."
-            detail="A grounded response appears only after backend monitoring creates one."
+            title="No drafts are awaiting review."
+            detail="Grounded questions and specialist responses appear here before publication."
           />
         </div>
       ) : (
         <div className="mt-7 grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
-          <aside className="surface h-fit divide-y divide-[var(--border)]" aria-label="Pending responses">
-            <div className="eyebrow px-4 py-3 text-[var(--clinical)]">Responses</div>
+          <aside className="surface h-fit divide-y divide-[var(--border)]" aria-label="Pending drafts">
+            {posts.length > 0 && (
+              <>
+                <div className="eyebrow px-4 py-3 text-[var(--clinical)]">Question drafts</div>
+                {posts.map((post) => (
+                  <button
+                    key={post.id}
+                    type="button"
+                    onClick={() => openPost(post)}
+                    className={`w-full border-l-2 px-4 py-4 text-left transition-colors ${
+                      selectedPost?.id === post.id
+                        ? 'border-l-[var(--accent)] bg-[#f3e9df]'
+                        : 'border-l-transparent hover:bg-[#f8f2e9]'
+                    }`}
+                  >
+                    <div className="metadata">Question draft</div>
+                    <div className="publication-title mt-1 line-clamp-3 text-base">
+                      {post.title}
+                    </div>
+                  </button>
+                ))}
+              </>
+            )}
+            {responses.length > 0 && (
+              <div className="eyebrow px-4 py-3 text-[var(--clinical)]">Response drafts</div>
+            )}
             {responses.map((response) => (
               <button
                 key={response.id}
@@ -171,6 +222,32 @@ export function ReviewInboxPage({
               </button>
             ))}
           </aside>
+
+          {selectedPost && (
+            <article className="review-document">
+              <div className="eyebrow">Question draft</div>
+              <div className="mt-3 flex flex-wrap gap-2 border-b border-[var(--border)] pb-5">
+                <Badge>Draft prepared</Badge>
+                {selectedPost.provenance.grounding?.source_system === 'medplum' && (
+                  <Badge tone="clinical">Grounded in Medplum</Badge>
+                )}
+                <Badge tone="warning">Awaiting physician approval</Badge>
+              </div>
+              <div className="mt-6">
+                <ForumPostView post={selectedPost} />
+              </div>
+              <footer className="mt-7 flex flex-wrap items-center gap-4 border-t border-[var(--border)] pt-5">
+                <span className="metadata">
+                  Approval publishes this question under {physician.physician.display_name}'s authorship.
+                </span>
+                <div className="ml-auto">
+                  <PrimaryButton tone="approve" disabled={approving} onClick={() => void approve()}>
+                    {approving ? 'Publishing question...' : 'Approve question'}
+                  </PrimaryButton>
+                </div>
+              </footer>
+            </article>
+          )}
 
           {selected && (
             <article className="review-document">

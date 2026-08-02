@@ -117,6 +117,23 @@ export interface PatientCaseContext {
   observations: ObservationContext[]
 }
 
+export interface ReferralCandidate {
+  npi: string
+  name: string
+  specialty: string
+  city: string
+  state: string
+  connection_status: 'connected' | 'not_connected'
+  lamina_status: string
+  why: string[]
+}
+
+export interface ReferralRecommendations {
+  specialty: string
+  reason: string
+  candidates: ReferralCandidate[]
+}
+
 export interface ForumAuthor {
   physician_npi: string
   physician_name: string
@@ -327,6 +344,21 @@ export function getPatientCaseContext(
   return request(
     `/physicians/${encodeURIComponent(physicianNpi)}/patients/${encodeURIComponent(patientRef)}/case-context`,
   )
+}
+
+export function getReferralRecommendations(
+  referringPhysicianNpi: string,
+  patientRef: string,
+  connectedPhysicianNpis: string[],
+): Promise<ReferralRecommendations> {
+  return request('/referrals/recommendations', {
+    method: 'POST',
+    body: JSON.stringify({
+      referring_physician_npi: referringPhysicianNpi,
+      patient_ref: patientRef,
+      connected_physician_npis: connectedPhysicianNpis,
+    }),
+  })
 }
 
 export function generatePatientForumPost(
